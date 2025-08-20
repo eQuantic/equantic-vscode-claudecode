@@ -1,0 +1,1 @@
+- para este projeto nunca use simulações como solução de implementação. devemos sempre trabalhar com soluções reais e definitivas

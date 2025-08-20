@@ -1,0 +1,217 @@
+{
+  "name": "equantic-claude-code",
+  "displayName": "eQuantic Claude Code",
+  "description": "VS Code extension for seamless Claude Code integration",
+  "version": "0.1.0",
+  "publisher": "equantic",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Other",
+    "AI",
+    "Debuggers"
+  ],
+  "keywords": [
+    "claude",
+    "claude-code",
+    "ai",
+    "assistant",
+    "code-generation",
+    "debugging"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "equantic-claude-code.openChat",
+        "title": "Open Claude Code Chat",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "equantic-claude-code.newTask",
+        "title": "New Claude Task",
+        "icon": "$(add)"
+      },
+      {
+        "command": "equantic-claude-code.stopTask",
+        "title": "Stop Current Task",
+        "icon": "$(stop)"
+      },
+      {
+        "command": "equantic-claude-code.clearHistory",
+        "title": "Clear Chat History",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "equantic-claude-code.openSettings",
+        "title": "Claude Code Settings",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "equantic-claude-code.resumeSession",
+        "title": "Resume Session",
+        "icon": "$(play)"
+      },
+      {
+        "command": "equantic-claude-code.refreshHistory",
+        "title": "Refresh History",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "equantic-claude-code.showInstallationInfo",
+        "title": "Show Claude Code Installation Info",
+        "icon": "$(info)"
+      },
+      {
+        "command": "equantic-claude-code.refreshInstallation",
+        "title": "Refresh Claude Code Installation",
+        "icon": "$(sync)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "equantic-claude-code",
+          "title": "Claude Code",
+          "icon": "$(comment-discussion)"
+        }
+      ]
+    },
+    "views": {
+      "equantic-claude-code": [
+        {
+          "type": "webview",
+          "id": "equantic-claude-code.chatView",
+          "name": "Chat",
+          "when": "true"
+        },
+        {
+          "id": "equantic-claude-code.historyView",
+          "name": "History",
+          "when": "true",
+          "icon": "$(history)"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "equantic-claude-code.newTask",
+          "when": "view == equantic-claude-code.chatView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "equantic-claude-code.stopTask",
+          "when": "view == equantic-claude-code.chatView",
+          "group": "navigation@2"
+        },
+        {
+          "command": "equantic-claude-code.clearHistory",
+          "when": "view == equantic-claude-code.chatView",
+          "group": "navigation@3"
+        },
+        {
+          "command": "equantic-claude-code.openSettings",
+          "when": "view == equantic-claude-code.chatView",
+          "group": "navigation@4"
+        },
+        {
+          "command": "equantic-claude-code.showInstallationInfo",
+          "when": "view == equantic-claude-code.chatView",
+          "group": "navigation@5"
+        },
+        {
+          "command": "equantic-claude-code.refreshHistory",
+          "when": "view == equantic-claude-code.historyView",
+          "group": "navigation@1"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "equantic-claude-code.openChat",
+          "group": "claude@1"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "equantic-claude-code.openChat",
+          "group": "claude@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "equantic-claude-code.showInstallationInfo"
+        },
+        {
+          "command": "equantic-claude-code.refreshInstallation"
+        },
+        {
+          "command": "equantic-claude-code.refreshHistory"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "equantic-claude-code.openChat",
+        "key": "ctrl+shift+c",
+        "mac": "cmd+shift+c"
+      },
+      {
+        "command": "equantic-claude-code.newTask",
+        "key": "ctrl+shift+n",
+        "mac": "cmd+shift+n"
+      }
+    ],
+    "configuration": {
+      "title": "Equantic Claude Code",
+      "properties": {
+        "equantic-claude-code.claudeExecutablePath": {
+          "type": "string",
+          "default": "claude",
+          "description": "Path to the Claude Code executable"
+        },
+        "equantic-claude-code.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically start Claude Code session when opening workspace"
+        },
+        "equantic-claude-code.maxTokens": {
+          "type": "number",
+          "default": 4096,
+          "description": "Maximum tokens for Claude responses"
+        },
+        "equantic-claude-code.temperature": {
+          "type": "number",
+          "default": 0.1,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Temperature for Claude responses"
+        },
+        "equantic-claude-code.showNotifications": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show notifications for Claude Code events"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile && npm run copy-templates",
+    "compile": "tsc -p ./",
+    "copy-templates": "mkdir -p dist/templates && cp -r src/templates/* dist/templates/",
+    "build": "npm run compile && npm run copy-templates",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "18.x",
+    "@types/vscode": "^1.74.0",
+    "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "node-pty": "^1.0.0"
+  }
+}

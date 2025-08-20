@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claude Code Chat</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            background: var(--vscode-editor-background);
+            color: var(--vscode-editor-foreground);
+        }
+
+        .chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .message {
+            max-width: 90%;
+            word-wrap: break-word;
+            animation: fadeIn 0.3s ease-in;
+        }
+
+        .message.user {
+            align-self: flex-end;
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            padding: 12px 16px;
+            border-radius: 18px 18px 4px 18px;
+            margin-bottom: 8px;
+        }
+
+        .message.assistant {
+            align-self: flex-start;
+            background: var(--vscode-input-background);
+            border: 1px solid var(--vscode-input-border);
+            padding: 12px 16px;
+            border-radius: 18px 18px 18px 4px;
+            margin-bottom: 8px;
+        }
+
+        .message-meta {
+            font-size: 0.75em;
+            opacity: 0.7;
+            margin-bottom: 4px;
+        }
+
+        /* Streaming Cards */
+        .streaming-card {
+            background: var(--vscode-editor-background);
+            border: 1px solid var(--vscode-panel-border);
+            border-radius: 8px;
+            margin: 8px 0;
+            overflow: hidden;
+            transition: all 0.3s ease;
+        }
+
+        .card-header {
+            background: var(--vscode-titleBar-activeBackground);
+            padding: 8px 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.9em;
+            font-weight: 500;
+        }
+
+        .card-content {
+            padding: 12px;
+        }
+
+        /* Code Snippets */
+        .code-snippet {
+            background: var(--vscode-textCodeBlock-background);
+            border: 1px solid var(--vscode-panel-border);
+            border-radius: 6px;
+            margin: 8px 0;
+            overflow: hidden;
+        }
+
+        .code-snippet pre {
+            margin: 0;
+            padding: 12px;
+            overflow-x: auto;
+            font-family: var(--vscode-editor-font-family);
+            font-size: var(--vscode-editor-font-size);
+        }
+
+        .code-header {
+            background: var(--vscode-badge-background);
+            color: var(--vscode-badge-foreground);
+            padding: 4px 8px;
+            font-size: 0.8em;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .copy-button {
+            background: transparent;
+            border: none;
+            color: var(--vscode-badge-foreground);
+            cursor: pointer;
+            padding: 2px 4px;
+            border-radius: 2px;
+        }
+
+        .copy-button:hover {
+            background: var(--vscode-button-hoverBackground);
+        }
+
+        /* Input Area */
+        .input-container {
+            padding: 16px;
+            background: var(--vscode-panel-background);
+            border-top: 1px solid var(--vscode-panel-border);
+            display: flex;
+            gap: 8px;
+            align-items: flex-end;
+        }
+
+        .message-input {
+            flex: 1;
+            background: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
+            border: 1px solid var(--vscode-input-border);
+            border-radius: 20px;
+            padding: 12px 16px;
+            resize: none;
+            min-height: 20px;
+            max-height: 120px;
+            font-family: inherit;
+            font-size: inherit;
+        }
+
+        .message-input:focus {
+            outline: none;
+            border-color: var(--vscode-focusBorder);
+        }
+
+        .send-button {
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border: none;
+            border-radius: 50%;
+            width: 44px;
+            height: 44px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            transition: background 0.2s ease;
+        }
+
+        .send-button:hover {
+            background: var(--vscode-button-hoverBackground);
+        }
+
+        .send-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Workspace Context */
+        .workspace-context {
+            background: var(--vscode-badge-background);
+            color: var(--vscode-badge-foreground);
+            padding: 8px 12px;
+            margin: 8px 0;
+            border-radius: 4px;
+            font-size: 0.85em;
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .context-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        /* Thinking Animation */
+        .thinking {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: var(--vscode-editor-inactiveSelectionBackground);
+            border-radius: 16px;
+            margin: 8px 0;
+        }
+
+        .thinking-dots {
+            display: flex;
+            gap: 2px;
+        }
+
+        .thinking-dots span {
+            width: 6px;
+            height: 6px;
+            background: var(--vscode-editor-foreground);
+            border-radius: 50%;
+            animation: bounce 1.4s infinite ease-in-out both;
+        }
+
+        .thinking-dots span:nth-child(1) { animation-delay: -0.32s; }
+        .thinking-dots span:nth-child(2) { animation-delay: -0.16s; }
+
+        @keyframes bounce {
+            0%, 80%, 100% { 
+                transform: scale(0);
+            } 40% { 
+                transform: scale(1);
+            }
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Syntax Highlighting */
+        .keyword { color: var(--vscode-symbolIcon-keywordForeground, #569cd6); }
+        .string { color: var(--vscode-symbolIcon-stringForeground, #ce9178); }
+        .comment { color: var(--vscode-symbolIcon-colorForeground, #6a9955); }
+
+        /* Typing Indicator */
+        .typing-indicator {
+            display: flex;
+            justify-content: flex-start;
+            margin: 12px 0;
+            animation: fadeIn 0.3s ease-in;
+        }
+
+        .typing-bubble {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--vscode-input-background);
+            border: 1px solid var(--vscode-input-border);
+            border-radius: 18px 18px 18px 4px;
+            padding: 12px 16px;
+            max-width: 200px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+
+        .typing-avatar {
+            font-size: 16px;
+            flex-shrink: 0;
+        }
+
+        .typing-content {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .typing-dots {
+            display: flex;
+            gap: 3px;
+            align-items: center;
+            height: 16px;
+        }
+
+        .typing-dots span {
+            width: 6px;
+            height: 6px;
+            background: var(--vscode-editor-foreground);
+            border-radius: 50%;
+            opacity: 0.4;
+            animation: typingDots 1.4s infinite ease-in-out;
+        }
+
+        .typing-dots span:nth-child(1) {
+            animation-delay: 0s;
+        }
+
+        .typing-dots span:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .typing-dots span:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        .typing-text {
+            font-size: 10px;
+            color: var(--vscode-descriptionForeground);
+            opacity: 0.8;
+            margin-top: 2px;
+        }
+
+        @keyframes typingDots {
+            0%, 60%, 100% {
+                opacity: 0.4;
+                transform: scale(1);
+            }
+            30% {
+                opacity: 1;
+                transform: scale(1.2);
+            }
+        }
+
+        /* Pulse effect for the entire bubble */
+        .typing-bubble {
+            animation: typingBubblePulse 2s infinite ease-in-out;
+        }
+
+        @keyframes typingBubblePulse {
+            0%, 100% {
+                transform: scale(1);
+            }
+            50% {
+                transform: scale(1.02);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="chatContainer" class="chat-container">
+        <!-- Messages will be inserted here -->
+        
+        <!-- Typing indicator -->
+        <div id="typingIndicator" class="typing-indicator" style="display: none;">
+            <div class="typing-bubble">
+                <div class="typing-avatar">🤖</div>
+                <div class="typing-content">
+                    <div class="typing-dots">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                    </div>
+                    <div class="typing-text">Claude está pensando...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="workspaceContext" class="workspace-context" style="display: none;">
+        <!-- Workspace context will be inserted here -->
+    </div>
+
+    <div class="input-container">
+        <textarea 
+            id="messageInput" 
+            class="message-input" 
+            placeholder="Type your message to Claude Code..."
+            rows="1"
+        ></textarea>
+        <button id="sendButton" class="send-button" title="Send message">
+            ➤
+        </button>
+    </div>
+
+    <script>
+        const vscode = acquireVsCodeApi();
+        let isProcessing = false;
+
+        // DOM elements
+        const chatContainer = document.getElementById('chatContainer');
+        const messageInput = document.getElementById('messageInput');
+        const sendButton = document.getElementById('sendButton');
+        const workspaceContext = document.getElementById('workspaceContext');
+        const typingIndicator = document.getElementById('typingIndicator');
+
+        // Message handling
+        window.addEventListener('message', event => {
+            const message = event.data;
+            
+            switch (message.type) {
+                case 'streamingMessage':
+                    hideTypingIndicator();
+                    handleStreamingMessage(message.data);
+                    break;
+                case 'streamingComplete':
+                    hideTypingIndicator();
+                    handleStreamingComplete(message.data);
+                    break;
+                case 'streamingError':
+                    hideTypingIndicator();
+                    handleStreamingError(message.error);
+                    break;
+                case 'workspaceContext':
+                    updateWorkspaceContext(message.data);
+                    break;
+                case 'showTyping':
+                    showTypingIndicator();
+                    break;
+                case 'hideTyping':
+                    hideTypingIndicator();
+                    break;
+            }
+        });
+
+        // Send message
+        function sendMessage() {
+            const text = messageInput.value.trim();
+            if (!text || isProcessing) return;
+
+            // Add user message
+            addMessage({
+                role: 'user',
+                content: text,
+                timestamp: Date.now()
+            });
+
+            // Clear input
+            messageInput.value = '';
+            messageInput.style.height = 'auto';
+            
+            // Show typing indicator immediately
+            showTypingIndicator();
+            
+            // Send to extension
+            vscode.postMessage({
+                type: 'sendMessage',
+                message: text
+            });
+
+            isProcessing = true;
+            updateSendButton();
+        }
+
+        // Event listeners
+        sendButton.addEventListener('click', sendMessage);
+        
+        messageInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        messageInput.addEventListener('input', (e) => {
+            e.target.style.height = 'auto';
+            e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
+        });
+
+        // Core functions
+        function addMessage(message) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message ' + message.role;
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            contentDiv.textContent = message.content;
+            
+            const metaDiv = document.createElement('div');
+            metaDiv.className = 'message-meta';
+            const timeStr = new Date(message.timestamp).toLocaleTimeString();
+            metaDiv.textContent = (message.role === 'user' ? 'You' : 'Claude') + ' • ' + timeStr;
+            
+            messageDiv.appendChild(metaDiv);
+            messageDiv.appendChild(contentDiv);
+            
+            chatContainer.appendChild(messageDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        function handleStreamingMessage(data) {
+            // Create or update streaming card based on content type
+            createIntelligentMessageCard(data.content, data.type);
+        }
+
+        function handleStreamingComplete(data) {
+            isProcessing = false;
+            updateSendButton();
+            
+            if (data.finalMessage) {
+                // Add final message if needed
+                addMessage(data.finalMessage);
+            }
+        }
+
+        function handleStreamingError(error) {
+            isProcessing = false;
+            updateSendButton();
+            
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'message assistant';
+            errorDiv.innerHTML = '<div class="message-meta">Error</div><div style="color: var(--vscode-errorForeground);">❌ ' + error + '</div>';
+            chatContainer.appendChild(errorDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        function updateSendButton() {
+            sendButton.disabled = isProcessing;
+            sendButton.textContent = isProcessing ? '⏳' : '➤';
+        }
+
+        function updateWorkspaceContext(context) {
+            if (!context) return;
+            
+            let contextHTML = '';
+            
+            if (context.rootPath) {
+                contextHTML += '<div class="context-item"><span>📁</span>Workspace: ' + context.rootPath.split('/').pop() + '</div>';
+            }
+            
+            if (context.currentFile) {
+                contextHTML += '<div class="context-item"><span>📄</span>Current: ' + context.currentFile.path.split('/').pop() + '</div>';
+            }
+            
+            if (context.openFiles && context.openFiles.length > 0) {
+                contextHTML += '<div class="context-item"><span>📂</span>' + context.openFiles.length + ' files open</div>';
+            }
+            
+            if (contextHTML) {
+                workspaceContext.innerHTML = contextHTML;
+                workspaceContext.style.display = 'flex';
+            }
+        }
+
+        // Simple intelligent message cards
+        function createIntelligentMessageCard(content, messageType) {
+            const cardType = analyzeContentType(content, messageType);
+            
+            const messageCard = document.createElement('div');
+            messageCard.className = 'streaming-card ' + cardType.type;
+            
+            const cardHeader = document.createElement('div');
+            cardHeader.className = 'card-header';
+            cardHeader.innerHTML = 
+                '<div class="card-icon">' + cardType.icon + '</div>' +
+                '<div class="card-title">' + cardType.title + '</div>' +
+                '<div class="card-timestamp">' + new Date().toLocaleTimeString() + '</div>';
+            
+            const cardContent = document.createElement('div');
+            cardContent.className = 'card-content';
+            
+            // Format content based on type
+            let formattedContent = content;
+            if (cardType.type === 'code-snippet') {
+                formattedContent = formatCodeSnippet(content);
+            } else {
+                formattedContent = processBasicContent(content);
+            }
+            
+            cardContent.innerHTML = formattedContent;
+            
+            messageCard.appendChild(cardHeader);
+            messageCard.appendChild(cardContent);
+            
+            chatContainer.appendChild(messageCard);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+            
+            return messageCard;
+        }
+
+        function analyzeContentType(content, messageType) {
+            const text = String(content).toLowerCase();
+            
+            // Code detection
+            if (hasCodeBlocks(content) || isCodeSnippet(content)) {
+                const language = detectLanguage(content);
+                return { 
+                    type: 'code-snippet', 
+                    icon: '💻', 
+                    title: 'Code Snippet',
+                    language: language
+                };
+            }
+            
+            // Other content types
+            if (text.includes('todo') && text.includes('status')) {
+                return { type: 'todo-planning', icon: '📋', title: 'Planning' };
+            }
+            
+            if (text.includes('exploring') || text.includes('files')) {
+                return { type: 'file-exploration', icon: '📁', title: 'File Explorer' };
+            }
+            
+            if (text.includes('analyzing') || text.includes('let me')) {
+                return { type: 'thinking', icon: '💭', title: 'Thinking' };
+            }
+            
+            return { type: 'text-message', icon: '💬', title: 'Claude Response' };
+        }
+
+        function hasCodeBlocks(text) {
+            return text.indexOf('```') >= 0;
+        }
+
+        function isCodeSnippet(text) {
+            if (hasCodeBlocks(text)) return true;
+            
+            const codeIndicators = [
+                'function(', 'function ', 'const ', 'let ', 'def ', 'class ',
+                'import ', 'console.log', 'print(', 'return ', 'public class'
+            ];
+            
+            return codeIndicators.some(indicator => text.includes(indicator));
+        }
+
+        function detectLanguage(text) {
+            if (text.includes('```python')) return 'python';
+            if (text.includes('```javascript') || text.includes('```js')) return 'javascript';
+            if (text.includes('```typescript') || text.includes('```ts')) return 'typescript';
+            if (text.includes('```csharp') || text.includes('```cs')) return 'csharp';
+            if (text.includes('```html')) return 'html';
+            if (text.includes('```css')) return 'css';
+            if (text.includes('```json')) return 'json';
+            
+            // Content-based detection
+            const lowerText = text.toLowerCase();
+            if (lowerText.includes('def ') && lowerText.includes(':')) return 'python';
+            if (lowerText.includes('function ') && lowerText.includes('{')) return 'javascript';
+            if (lowerText.includes('public class')) return 'csharp';
+            
+            return 'code';
+        }
+
+        function formatCodeSnippet(content) {
+            const language = detectLanguage(content);
+            let code = content;
+            
+            // Extract code from markdown blocks
+            if (content.includes('```')) {
+                const start = content.indexOf('```');
+                const end = content.lastIndexOf('```');
+                if (start !== end) {
+                    code = content.substring(start + 3, end).trim();
+                    const firstNewline = code.indexOf('\n');
+                    if (firstNewline > 0 && firstNewline < 20) {
+                        code = code.substring(firstNewline + 1);
+                    }
+                }
+            }
+            
+            return '<div class="code-snippet">' +
+                   '<div class="code-header">' +
+                   '<span>💻 ' + language.toUpperCase() + '</span>' +
+                   '<button class="copy-button" onclick="copyCode(this)" title="Copy code">📋</button>' +
+                   '</div>' +
+                   '<pre><code>' + escapeHtml(code) + '</code></pre>' +
+                   '</div>';
+        }
+
+        function processBasicContent(content) {
+            return escapeHtml(content).replace(/\n/g, '<br>');
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function copyCode(button) {
+            const codeBlock = button.closest('.code-snippet').querySelector('code');
+            const text = codeBlock.textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                button.textContent = '✅';
+                setTimeout(() => button.textContent = '📋', 2000);
+            });
+        }
+
+        // Typing indicator functions
+        function showTypingIndicator() {
+            if (typingIndicator) {
+                typingIndicator.style.display = 'flex';
+                // Smooth scroll to bottom to show the typing indicator
+                setTimeout(() => {
+                    chatContainer.scrollTop = chatContainer.scrollHeight;
+                }, 100);
+            }
+        }
+
+        function hideTypingIndicator() {
+            if (typingIndicator) {
+                typingIndicator.style.display = 'none';
+            }
+        }
+
+        // Request initial workspace context
+        vscode.postMessage({ type: 'getWorkspaceContext' });
+    </script>
+</body>
+</html>
