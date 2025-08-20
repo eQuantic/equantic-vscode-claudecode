@@ -42,6 +42,7 @@ export class ClaudeSessionManager {
     async getProjectSessions(): Promise<ClaudeTask[]> {
         const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
         if (!workspaceFolder) {
+            this.outputChannel.appendLine(`No workspace folder found`);
             return [];
         }
 
@@ -49,8 +50,12 @@ export class ClaudeSessionManager {
         const projectKey = this.getProjectKey(projectPath);
         const projectSessionDir = path.join(this.projectsDir, projectKey);
 
+        this.outputChannel.appendLine(`🔍 Looking for sessions in: ${projectSessionDir}`);
+        this.outputChannel.appendLine(`📁 Project path: ${projectPath}`);
+        this.outputChannel.appendLine(`🔑 Project key: ${projectKey}`);
+
         if (!fs.existsSync(projectSessionDir)) {
-            this.outputChannel.appendLine(`No sessions found for project: ${projectPath}`);
+            this.outputChannel.appendLine(`❌ Sessions directory does not exist: ${projectSessionDir}`);
             return [];
         }
 
@@ -63,19 +68,29 @@ export class ClaudeSessionManager {
                     return statB.mtime.getTime() - statA.mtime.getTime(); // Most recent first
                 });
 
+            this.outputChannel.appendLine(`📄 Found ${sessionFiles.length} session files`);
+
             const sessions: ClaudeTask[] = [];
 
-            for (const sessionFile of sessionFiles) {
+            // Limit to most recent 10 sessions for performance
+            const recentSessionFiles = sessionFiles.slice(0, 10);
+
+            for (const sessionFile of recentSessionFiles) {
                 const sessionPath = path.join(projectSessionDir, sessionFile);
                 const sessionId = path.basename(sessionFile, '.jsonl');
+                
+                this.outputChannel.appendLine(`🔄 Parsing session: ${sessionFile}`);
                 
                 try {
                     const task = await this.parseSessionFile(sessionPath, sessionId);
                     if (task) {
                         sessions.push(task);
+                        this.outputChannel.appendLine(`✅ Successfully parsed: ${task.title}`);
+                    } else {
+                        this.outputChannel.appendLine(`⚠️  Empty task for: ${sessionFile}`);
                     }
                 } catch (error) {
-                    this.outputChannel.appendLine(`Error parsing session ${sessionFile}: ${error}`);
+                    this.outputChannel.appendLine(`❌ Error parsing session ${sessionFile}: ${error}`);
                 }
             }
 
@@ -264,8 +279,8 @@ export class ClaudeSessionManager {
     }
 
     private getProjectKey(projectPath: string): string {
-        // Convert project path to Claude's format
-        return projectPath.replace(/\//g, '-').replace(/^-/, '');
+        // Convert project path to Claude's format (matches Claude CLI behavior)
+        return projectPath.replace(/\//g, '-');
     }
 
     /**

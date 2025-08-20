@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
 import { ClaudeChatProvider } from './providers/ClaudeChatProvider';
-import { ClaudeHistoryProvider } from './providers/ClaudeHistoryProvider';
 import { ClaudeCodeManager } from './core/ClaudeCodeManager';
 
 export function activate(context: vscode.ExtensionContext) {
@@ -8,7 +7,6 @@ export function activate(context: vscode.ExtensionContext) {
 
     const claudeManager = new ClaudeCodeManager(context);
     const chatProvider = new ClaudeChatProvider(context, claudeManager);
-    const historyProvider = new ClaudeHistoryProvider(context, claudeManager);
 
     // Register webview provider for chat
     const chatWebview = vscode.window.registerWebviewViewProvider(
@@ -21,11 +19,6 @@ export function activate(context: vscode.ExtensionContext) {
         }
     );
 
-    // Register tree data provider for history
-    const historyView = vscode.window.registerTreeDataProvider(
-        'equantic-claude-code.historyView',
-        historyProvider
-    );
 
     // Register commands
     const openChatCommand = vscode.commands.registerCommand(
@@ -52,7 +45,6 @@ export function activate(context: vscode.ExtensionContext) {
     const clearHistoryCommand = vscode.commands.registerCommand(
         'equantic-claude-code.clearHistory',
         () => {
-            historyProvider.clearHistory();
             chatProvider.clearChat();
         }
     );
@@ -79,12 +71,6 @@ export function activate(context: vscode.ExtensionContext) {
         }
     );
 
-    const refreshHistoryCommand = vscode.commands.registerCommand(
-        'equantic-claude-code.refreshHistory',
-        async () => {
-            await historyProvider.refresh();
-        }
-    );
 
     const showInstallationInfoCommand = vscode.commands.registerCommand(
         'equantic-claude-code.showInstallationInfo',
@@ -103,14 +89,12 @@ export function activate(context: vscode.ExtensionContext) {
     // Add all disposables to context
     context.subscriptions.push(
         chatWebview,
-        historyView,
         openChatCommand,
         newTaskCommand,
         stopTaskCommand,
         clearHistoryCommand,
         openSettingsCommand,
         resumeSessionCommand,
-        refreshHistoryCommand,
         showInstallationInfoCommand,
         refreshInstallationCommand,
         claudeManager

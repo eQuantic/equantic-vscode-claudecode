@@ -76,13 +76,20 @@ export class ClaudeCodeManager implements vscode.Disposable {
         this.outputChannel.appendLine('🚀 Initializing Claude Code Manager...');
         
         try {
-            // Step 1: Try to initialize SDK first (preferred method)
-            this.outputChannel.appendLine('🎯 Attempting to initialize Claude Code SDK...');
+            // Step 1: Try to initialize SDK with conservative timeout
+            this.outputChannel.appendLine('🎯 Attempting to initialize Claude Code SDK with safe timeout...');
             try {
-                await this.sdkClient.initialize({
+                // Very short timeout to prevent blocking
+                const sdkInitPromise = this.sdkClient.initialize({
                     maxTokens: this.config.maxTokens,
                     temperature: this.config.temperature
                 });
+                
+                const timeoutPromise = new Promise<never>((_, reject) => {
+                    setTimeout(() => reject(new Error('SDK initialization timeout')), 3000); // Only 3 seconds
+                });
+
+                await Promise.race([sdkInitPromise, timeoutPromise]);
                 this.useSDK = true;
                 this.outputChannel.appendLine('✨ Successfully initialized Claude Code SDK!');
             } catch (sdkError) {
@@ -365,40 +372,9 @@ export class ClaudeCodeManager implements vscode.Disposable {
 
         this.outputChannel.appendLine(`Sending to Claude Code: ${contextMessage}`);
 
-        // Use session ID if current task has one, or get latest session, or create new one
-        let sessionParam = '--continue';
-        
-        if (this.currentTask?.metadata?.sessionId) {
-            // Use existing session ID
-            sessionParam = `--session-id ${this.currentTask.metadata.sessionId}`;
-        } else {
-            // Try to get the latest session or create a new one
-            const latestSessionId = await this.sessionManager.getLatestSessionId();
-            if (latestSessionId && this.sessionManager.sessionExists(latestSessionId)) {
-                sessionParam = `--session-id ${latestSessionId}`;
-                // Update current task with session ID
-                if (this.currentTask) {
-                    this.currentTask.metadata = {
-                        ...this.currentTask.metadata,
-                        sessionId: latestSessionId
-                    };
-                }
-            } else {
-                // Create new session
-                const newSessionId = this.sessionManager.generateSessionId();
-                sessionParam = `--session-id ${newSessionId}`;
-                if (this.currentTask) {
-                    this.currentTask.metadata = {
-                        ...this.currentTask.metadata,
-                        sessionId: newSessionId
-                    };
-                }
-            }
-        }
-
-        // Execute claude command directly with the message as an argument
-        // Using direct argument instead of echo/pipe to avoid shell escaping issues
-        const claudeArgs = ['--print', ...sessionParam.split(' ')];
+        // Always use --print without session management to avoid conflicts
+        // Session management will be handled differently
+        const claudeArgs = ['--print'];
         const command = `${this.config.claudeExecutablePath} ${claudeArgs.join(' ')} "${contextMessage.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`;
         
         exec(command, { 
@@ -447,13 +423,26 @@ export class ClaudeCodeManager implements vscode.Disposable {
         });
     }
 
+    setCurrentTask(task: ClaudeTask): void {
+        this.currentTask = task;
+    }
+
     async loadClaudeCodeSessions(): Promise<ClaudeTask[]> {
         try {
+            this.outputChannel.appendLine(`🔄 Starting to load Claude Code sessions...`);
+            
             // Get real Claude Code sessions from the session manager
             const realSessions = await this.sessionManager.getProjectSessions();
+            this.outputChannel.appendLine(`📄 Found ${realSessions.length} real Claude sessions`);
+            
+            // Log first few sessions for debug
+            if (realSessions.length > 0) {
+                this.outputChannel.appendLine(`📋 First session example: ${realSessions[0].title} (${realSessions[0].id})`);
+            }
             
             // Combine with any local tasks (for compatibility)
             const allSessions = [...realSessions, ...this.tasks];
+            this.outputChannel.appendLine(`📊 Local tasks: ${this.tasks.length}, Combined: ${allSessions.length}`);
             
             // Remove duplicates based on session ID
             const uniqueSessions = allSessions.filter((session, index, arr) => 
@@ -463,10 +452,11 @@ export class ClaudeCodeManager implements vscode.Disposable {
             // Sort by most recent
             uniqueSessions.sort((a, b) => b.updatedAt - a.updatedAt);
             
-            this.outputChannel.appendLine(`Loaded ${uniqueSessions.length} total sessions (${realSessions.length} from Claude Code CLI)`);
+            this.outputChannel.appendLine(`✅ Loaded ${uniqueSessions.length} total sessions (${realSessions.length} from Claude Code CLI)`);
             return uniqueSessions;
         } catch (error) {
-            this.outputChannel.appendLine(`Error loading Claude Code sessions: ${error}`);
+            this.outputChannel.appendLine(`❌ Error loading Claude Code sessions: ${error}`);
+            this.outputChannel.appendLine(`📚 Fallback: returning ${this.tasks.length} local tasks`);
             return this.tasks;
         }
     }
@@ -692,6 +682,35 @@ export class ClaudeCodeManager implements vscode.Disposable {
      */
     getInstallation(): ClaudeInstallation | null {
         return this.installation;
+    }
+
+    /**
+     * Set permission mode for SDK
+     */
+    setPermissionMode(mode: 'plan' | 'act'): void {
+        try {
+            if (this.useSDK && this.sdkClient) {
+                this.sdkClient.setPermissionMode(mode);
+            }
+            this.outputChannel.appendLine(`🔧 Permission mode set to: ${mode.toUpperCase()}`);
+        } catch (error) {
+            this.outputChannel.appendLine(`❌ Error setting permission mode: ${error}`);
+        }
+    }
+
+    /**
+     * Get current permission mode
+     */
+    getPermissionMode(): 'plan' | 'act' {
+        try {
+            if (this.useSDK && this.sdkClient) {
+                return this.sdkClient.getPermissionMode();
+            }
+            return 'act'; // Default for CLI mode
+        } catch (error) {
+            this.outputChannel.appendLine(`❌ Error getting permission mode: ${error}`);
+            return 'act'; // Safe fallback
+        }
     }
 
     /**

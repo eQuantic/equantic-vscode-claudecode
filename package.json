@@ -57,11 +57,6 @@
         "icon": "$(play)"
       },
       {
-        "command": "equantic-claude-code.refreshHistory",
-        "title": "Refresh History",
-        "icon": "$(refresh)"
-      },
-      {
         "command": "equantic-claude-code.showInstallationInfo",
         "title": "Show Claude Code Installation Info",
         "icon": "$(info)"
@@ -77,7 +72,7 @@
         {
           "id": "equantic-claude-code",
           "title": "Claude Code",
-          "icon": "$(comment-discussion)"
+          "icon": "resources/claude-icon.svg"
         }
       ]
     },
@@ -86,14 +81,8 @@
         {
           "type": "webview",
           "id": "equantic-claude-code.chatView",
-          "name": "Chat",
+          "name": "Claude Code",
           "when": "true"
-        },
-        {
-          "id": "equantic-claude-code.historyView",
-          "name": "History",
-          "when": "true",
-          "icon": "$(history)"
         }
       ]
     },
@@ -123,11 +112,6 @@
           "command": "equantic-claude-code.showInstallationInfo",
           "when": "view == equantic-claude-code.chatView",
           "group": "navigation@5"
-        },
-        {
-          "command": "equantic-claude-code.refreshHistory",
-          "when": "view == equantic-claude-code.historyView",
-          "group": "navigation@1"
         }
       ],
       "explorer/context": [
@@ -200,10 +184,12 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile && npm run copy-templates",
+    "vscode:prepublish": "npm run compile && npm run copy-templates && npm run copy-assets && npm run copy-resources",
     "compile": "tsc -p ./",
     "copy-templates": "mkdir -p dist/templates && cp -r src/templates/* dist/templates/",
-    "build": "npm run compile && npm run copy-templates",
+    "copy-assets": "mkdir -p dist/assets && cp -r src/assets/* dist/assets/",
+    "copy-resources": "mkdir -p dist/resources && cp -r resources/* dist/resources/",
+    "build": "npm run compile && npm run copy-templates && npm run copy-assets && npm run copy-resources",
     "watch": "tsc -watch -p ./"
   },
   "devDependencies": {
@@ -212,6 +198,7 @@
     "typescript": "^5.4.5"
   },
   "dependencies": {
+    "@anthropic-ai/claude-code": "^1.0.86",
     "node-pty": "^1.0.0"
   }
 }

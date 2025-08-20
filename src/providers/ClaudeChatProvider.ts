@@ -53,6 +53,12 @@ export class ClaudeChatProvider implements vscode.WebviewViewProvider {
 
         webviewView.webview.html = this.getWebviewContent(webviewView.webview);
 
+        // Proactively load recent tasks when webview is created
+        setTimeout(() => {
+            this.sendRecentTasks();
+            this.sendPermissionModeUpdate(); // Send initial permission mode
+        }, 1000);
+
         // Handle messages from webview
         webviewView.webview.onDidReceiveMessage(async (data) => {
             switch (data.type) {
@@ -64,6 +70,25 @@ export class ClaudeChatProvider implements vscode.WebviewViewProvider {
                     break;
                 case 'getWorkspaceContext':
                     this.sendWorkspaceContext();
+                    break;
+                case 'loadRecentTasks':
+                    this.sendRecentTasks();
+                    break;
+                case 'loadAllHistory':
+                    this.sendAllHistory();
+                    break;
+                case 'resumeTask':
+                    this.resumeTask(data.taskId);
+                    break;
+                case 'viewAllHistory':
+                    this.showAllHistory();
+                    break;
+                case 'setPermissionMode':
+                    this.claudeManager.setPermissionMode(data.mode);
+                    this.sendPermissionModeUpdate();
+                    break;
+                case 'getPermissionMode':
+                    this.sendPermissionModeUpdate();
                     break;
             }
         });
@@ -218,6 +243,118 @@ export class ClaudeChatProvider implements vscode.WebviewViewProvider {
             this._view.webview.postMessage({
                 type: 'workspaceContext',
                 context: context
+            });
+        }
+    }
+
+    private async sendRecentTasks() {
+        try {
+            console.log('🎯 ClaudeChatProvider: Starting sendRecentTasks');
+            const tasks = await this.claudeManager.loadClaudeCodeSessions();
+            console.log(`🎯 ClaudeChatProvider: Received ${tasks.length} tasks from manager`);
+            
+            // Format tasks for display - limit to 4 most recent for welcome screen
+            const formattedTasks = tasks.slice(0, 4).map(task => ({
+                id: task.id,
+                title: task.title || task.messages?.[0]?.content || 'New Task',
+                firstMessage: task.messages?.[0]?.content,
+                timestamp: task.createdAt || task.updatedAt,
+                tokenCount: task.metadata?.tokenCount || 0,
+                cacheInfo: task.metadata?.cacheInfo
+            }));
+            
+            console.log(`🎯 ClaudeChatProvider: Formatted ${formattedTasks.length} tasks for display`);
+            
+            if (this._view) {
+                this._view.webview.postMessage({
+                    type: 'loadRecentTasks',
+                    tasks: formattedTasks
+                });
+                console.log('🎯 ClaudeChatProvider: Sent loadRecentTasks message to webview');
+            } else {
+                console.log('🎯 ClaudeChatProvider: No webview available to send tasks');
+            }
+        } catch (error) {
+            console.error('❌ ClaudeChatProvider: Error loading recent tasks:', error);
+        }
+    }
+
+    private async sendAllHistory() {
+        try {
+            console.log('🎯 ClaudeChatProvider: Starting sendAllHistory');
+            const tasks = await this.claudeManager.loadClaudeCodeSessions();
+            console.log(`🎯 ClaudeChatProvider: Received ${tasks.length} total tasks`);
+            
+            // Format all tasks for history view (no limit)
+            const formattedTasks = tasks.map(task => ({
+                id: task.id,
+                title: task.title || task.messages?.[0]?.content || 'New Task',
+                firstMessage: task.messages?.[0]?.content,
+                timestamp: task.createdAt || task.updatedAt,
+                tokenCount: task.metadata?.tokenCount || 0,
+                cacheInfo: task.metadata?.cacheInfo
+            }));
+            
+            console.log(`🎯 ClaudeChatProvider: Formatted ${formattedTasks.length} tasks for history view`);
+            
+            if (this._view) {
+                this._view.webview.postMessage({
+                    type: 'loadAllHistory',
+                    tasks: formattedTasks
+                });
+                console.log('🎯 ClaudeChatProvider: Sent loadAllHistory message to webview');
+            } else {
+                console.log('🎯 ClaudeChatProvider: No webview available to send history');
+            }
+        } catch (error) {
+            console.error('❌ ClaudeChatProvider: Error loading all history:', error);
+        }
+    }
+
+    private async resumeTask(taskId: string) {
+        try {
+            // Load the specific task
+            const tasks = await this.claudeManager.loadClaudeCodeSessions();
+            const task = tasks.find(t => t.id === taskId);
+            
+            if (task) {
+                // Set as current task in manager
+                this.claudeManager.setCurrentTask(task);
+                
+                // Load messages into chat
+                this.messages = task.messages || [];
+                
+                // Tell webview to start chat session
+                if (this._view) {
+                    this._view.webview.postMessage({
+                        type: 'startChat',
+                        taskId: taskId
+                    });
+                    
+                    // Send existing messages
+                    this.messages.forEach(msg => {
+                        this._view?.webview.postMessage({
+                            type: 'addMessage',
+                            message: msg
+                        });
+                    });
+                }
+            }
+        } catch (error) {
+            vscode.window.showErrorMessage(`Error resuming task: ${error}`);
+        }
+    }
+
+    private showAllHistory() {
+        vscode.commands.executeCommand('equantic-claude-code.openHistory');
+    }
+
+    private sendPermissionModeUpdate() {
+        const currentMode = this.claudeManager.getPermissionMode();
+        if (this._view) {
+            this._view.webview.postMessage({
+                type: 'permissionModeUpdate',
+                mode: currentMode
             });
         }
     }
