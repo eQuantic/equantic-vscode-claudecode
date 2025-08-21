@@ -11,23 +11,30 @@ export class ClaudeChatProvider implements vscode.WebviewViewProvider {
     private messages: ClaudeMessage[] = [];
     private isStreaming: boolean = false;
     private streamingMessageId: string | null = null;
+    private outputChannel: vscode.OutputChannel;
 
     constructor(
         private context: vscode.ExtensionContext,
         private claudeManager: ClaudeCodeManager
     ) {
+        this.outputChannel = vscode.window.createOutputChannel('Claude Code Chat');
+        this.outputChannel.appendLine('🔧 ClaudeChatProvider: Constructor called');
+        
         // Listen for new messages from Claude
-        this.claudeManager.onMessageReceived(message => {
+        const messageDisposable = this.claudeManager.onMessageReceived(message => {
+            this.outputChannel.appendLine('📨 ClaudeChatProvider: onMessageReceived fired');
             this.addMessage(message);
         });
+        this.outputChannel.appendLine('🔧 ClaudeChatProvider: onMessageReceived listener registered');
 
         // Listen for streaming messages
-        this.claudeManager.onStreamingMessage(streamingMessage => {
-            console.log('🎯 ClaudeChatProvider: Received streaming message:', streamingMessage.type, streamingMessage.content?.substring(0, 50));
-            console.log('🎯 ClaudeChatProvider: About to call handleStreamingMessage');
+        const streamingDisposable = this.claudeManager.onStreamingMessage(streamingMessage => {
+            this.outputChannel.appendLine(`🎯 ClaudeChatProvider: Received streaming message: ${streamingMessage.type} - ${streamingMessage.content?.substring(0, 50)}`);
+            this.outputChannel.appendLine('🎯 ClaudeChatProvider: About to call handleStreamingMessage');
             this.handleStreamingMessage(streamingMessage);
-            console.log('🎯 ClaudeChatProvider: handleStreamingMessage completed');
+            this.outputChannel.appendLine('🎯 ClaudeChatProvider: handleStreamingMessage completed');
         });
+        this.outputChannel.appendLine('🔧 ClaudeChatProvider: onStreamingMessage listener registered');
 
         // Listen for streaming progress
         this.claudeManager.onStreamingProgress(progress => {
@@ -60,6 +67,7 @@ export class ClaudeChatProvider implements vscode.WebviewViewProvider {
         setTimeout(() => {
             this.sendRecentTasks();
             this.sendPermissionModeUpdate(); // Send initial permission mode
+            this.sendModelUpdate(); // Send initial model
         }, 1000);
 
         // Handle messages from webview
@@ -92,6 +100,10 @@ export class ClaudeChatProvider implements vscode.WebviewViewProvider {
                     break;
                 case 'getPermissionMode':
                     this.sendPermissionModeUpdate();
+                    break;
+                case 'changeModel':
+                    this.claudeManager.setModel(data.model);
+                    this.sendModelUpdate();
                     break;
             }
         });
@@ -188,10 +200,10 @@ export class ClaudeChatProvider implements vscode.WebviewViewProvider {
             cssClass: cssClass,
             metadata: streamingMessage.metadata
         };
-        console.log('🎯 ClaudeChatProvider: Sending message to webview:', messageToSend.type, messageToSend.content?.substring(0, 50));
-        console.log('🎯 ClaudeChatProvider: Webview available:', !!this._view?.webview);
+        this.outputChannel.appendLine(`🎯 ClaudeChatProvider: Sending message to webview: ${messageToSend.type} - ${messageToSend.content?.substring(0, 50)}`);
+        this.outputChannel.appendLine(`🎯 ClaudeChatProvider: Webview available: ${!!this._view?.webview}`);
         this._view.webview.postMessage(messageToSend);
-        console.log('🎯 ClaudeChatProvider: Message posted to webview successfully');
+        this.outputChannel.appendLine('🎯 ClaudeChatProvider: Message posted to webview successfully');
     }
 
     private updateStreamingProgress(progress: number) {
@@ -362,6 +374,16 @@ export class ClaudeChatProvider implements vscode.WebviewViewProvider {
             this._view.webview.postMessage({
                 type: 'permissionModeUpdate',
                 mode: currentMode
+            });
+        }
+    }
+
+    private sendModelUpdate() {
+        const currentModel = this.claudeManager.getModel();
+        if (this._view) {
+            this._view.webview.postMessage({
+                type: 'modelUpdate',
+                model: currentModel
             });
         }
     }

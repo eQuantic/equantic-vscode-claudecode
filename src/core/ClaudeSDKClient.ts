@@ -41,6 +41,7 @@ export class ClaudeSDKClient {
     private sessionId: string | null = null;
     private conversationHistory: ClaudeMessage[] = [];
     private currentPermissionMode: PermissionMode = 'default'; // Default to 'default' mode
+    private currentModel: string = 'claude-sonnet-4-20250514'; // Default model
     private globalSdkPath: string | null = null; // Store the detected SDK path
 
     constructor(outputChannel: vscode.OutputChannel) {
@@ -211,6 +212,21 @@ export class ClaudeSDKClient {
      */
     getPermissionMode(): PermissionMode {
         return this.currentPermissionMode;
+    }
+
+    /**
+     * Set model
+     */
+    setModel(model: string): void {
+        this.currentModel = model;
+        this.outputChannel.appendLine(`🤖 Model changed to: ${model}`);
+    }
+
+    /**
+     * Get current model
+     */
+    getModel(): string {
+        return this.currentModel;
     }
 
     /**

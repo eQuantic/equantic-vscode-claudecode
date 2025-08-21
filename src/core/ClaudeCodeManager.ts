@@ -274,7 +274,7 @@ export class ClaudeCodeManager implements vscode.Disposable {
         try {
             console.log('🎆 SDK Query API: Starting correct streaming implementation');
             this.outputChannel.appendLine(`🎆 Starting SDK query API streaming...`);
-            
+
             // Import the query function using dynamic global path detection
             const sdkPath = this.sdkClient.getGlobalSDKPath();
             if (!sdkPath) {
@@ -282,12 +282,12 @@ export class ClaudeCodeManager implements vscode.Disposable {
             }
             const sdkModule = await import(sdkPath);
             const { query } = sdkModule;
-            
+
             // Prepare context message
             let contextMessage = message;
             if (workspaceContext?.currentFile) {
                 contextMessage += `\n\nCurrent file: ${workspaceContext.currentFile.path}`;
-                
+
                 if (workspaceContext.currentFile.selection) {
                     const selection = workspaceContext.currentFile.selection;
                     const content = workspaceContext.currentFile.content || '';
@@ -296,66 +296,67 @@ export class ClaudeCodeManager implements vscode.Disposable {
                     contextMessage += `\n\nSelected code:\n\`\`\`\n${selectedLines.join('\n')}\n\`\`\``;
                 }
             }
-            
+
             if (workspaceContext?.rootPath) {
                 contextMessage += `\n\nProject: ${workspaceContext.rootPath}`;
             }
-            
+
             // Use the correct query API with async iteration
             console.log('🎆 SDK Query: About to start async iteration...');
             const queryIterable = query({
                 prompt: contextMessage,
                 options: {
+                    model: this.getModel(),
                     permissionMode: this.getPermissionMode() || 'default',
                     maxTurns: 5
                 }
             });
-            
+
             console.log('🎆 SDK Query: Query iterable created, starting loop...');
             let messageCount = 0;
-            
+
             for await (const sdkMessage of queryIterable) {
                 messageCount++;
-                console.log(`🎆 SDK Query: Received message #${messageCount}, type:`, sdkMessage.type);
+                this.outputChannel.appendLine(`🎆 SDK Query: Received message #${messageCount}, type: ${sdkMessage.type}`);
                 console.log('🎆 SDK Query: Full message:', JSON.stringify(sdkMessage, null, 2));
                 this.outputChannel.appendLine(`SDK Message #${messageCount}: ${sdkMessage.type} - ${JSON.stringify(sdkMessage).substring(0, 200)}...`);
-                
+
                 // DEBUG: Test all conditions
-                console.log('🔴 CONDITION TEST:');
-                console.log('  - type === "system":', sdkMessage.type === 'system');
-                console.log('  - type === "assistant":', sdkMessage.type === 'assistant');
-                console.log('  - type === "user":', sdkMessage.type === 'user');
-                console.log('  - type === "result":', sdkMessage.type === 'result');
-                console.log('  - actual type:', JSON.stringify(sdkMessage.type));
-                
+                this.outputChannel.appendLine(`🔴 CONDITION TEST: `);
+                this.outputChannel.appendLine(`  - type === "system": ${sdkMessage.type === 'system'}`);
+                this.outputChannel.appendLine(`  - type === "assistant": ${sdkMessage.type === 'assistant'}`);
+                this.outputChannel.appendLine(`  - type === "user": ${sdkMessage.type === 'user'}`);
+                this.outputChannel.appendLine(`  - type === "result": ${sdkMessage.type === 'result'}`);
+                this.outputChannel.appendLine(`  - actual type: ${JSON.stringify(sdkMessage.type)}`);
+
                 if (sdkMessage.type === 'system' && sdkMessage.subtype === 'init') {
-                    console.log('🎆 SDK System Init:', {
+                    console.log(`🎆 SDK System Init: ${JSON.stringify({
                         model: sdkMessage.model,
                         permissionMode: sdkMessage.permissionMode,
                         tools: sdkMessage.tools?.length || 0,
                         mcp_servers: sdkMessage.mcp_servers?.length || 0
-                    });
+                    })}`);
                 } else if (sdkMessage.type === 'assistant') {
-                    console.log('🔥 FOUND ASSISTANT MESSAGE!');
-                    console.log('🎆 Processing assistant message...');
+                    this.outputChannel.appendLine('🔥 FOUND ASSISTANT MESSAGE!');
+                    this.outputChannel.appendLine('🎆 Processing assistant message...');
                     // Assistant message from Claude - this contains the actual response content
                     const content = sdkMessage.message.content;
-                    console.log('🎆 Content type:', Array.isArray(content) ? 'array' : typeof content);
-                    console.log('🎆 Content:', content);
-                    
+                    this.outputChannel.appendLine(`🎆 Content type: ${Array.isArray(content) ? 'array' : typeof content}`);
+                    this.outputChannel.appendLine(`🎆 Content: ${JSON.stringify(content, null, 2)}`);
+
                     if (Array.isArray(content)) {
-                        console.log(`🎆 Processing ${content.length} content blocks...`);
+                        this.outputChannel.appendLine(`🎆 Processing ${content.length} content blocks...`);
                         // Handle content blocks
                         for (const block of content) {
-                            console.log('🎆 Block type:', block.type);
+                            this.outputChannel.appendLine(`🎆 Block type: ${block.type}`);
                             if (block.type === 'text') {
-                                console.log('🎆 Emitting text block:', block.text?.substring(0, 50));
+                                this.outputChannel.appendLine(`🎆 Emitting text block: ${block.text?.substring(0, 50)}`);
                                 this.emitStreamingMessage({
                                     type: 'text',
                                     content: block.text
                                 });
                             } else if (block.type === 'tool_use') {
-                                console.log('🎆 Emitting tool_use block:', block.name);
+                                this.outputChannel.appendLine(`🎆 Emitting tool_use block: ${block.name}`);
                                 this.emitStreamingMessage({
                                     type: 'tool_use',
                                     content: `Using tool: ${block.name}`,
@@ -385,14 +386,8 @@ export class ClaudeCodeManager implements vscode.Disposable {
                             turns: sdkMessage.num_turns,
                             cost: sdkMessage.total_cost_usd
                         });
-                        
-                        // The result contains the final formatted output
-                        if (sdkMessage.result) {
-                            this.emitStreamingMessage({
-                                type: 'text',
-                                content: sdkMessage.result
-                            });
-                        }
+
+                        // Don't emit result content - already sent via assistant message to avoid duplication
                     } else {
                         // Error result
                         console.log('🎆 SDK Error result:', sdkMessage.subtype);
@@ -403,33 +398,31 @@ export class ClaudeCodeManager implements vscode.Disposable {
                     }
                 }
             }
-            
+
             console.log(`🎉 SDK Query API: Streaming completed successfully - processed ${messageCount} messages`);
             this.outputChannel.appendLine(`✅ SDK query API streaming completed successfully - processed ${messageCount} messages`);
-            
+
             // Emit completion
-            const finalMessage: ClaudeMessage = {
+            // Don't show completion message - just emit empty completion event
+            this._onStreamingComplete.fire({
                 id: Date.now().toString(),
                 role: 'assistant',
-                content: `SDK streaming response completed`,
+                content: '', // No visible completion message
                 timestamp: Date.now(),
                 metadata: {
                     sessionId: currentSessionId
                 }
-            };
-            
-            this.updateCurrentTask(finalMessage);
-            this._onStreamingComplete.fire(finalMessage);
-            
+            });
+
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             console.log('❌ SDK Query API failed:', errorMessage);
             this.outputChannel.appendLine(`❌ SDK query API failed: ${errorMessage}`);
-            
+
             // Disable SDK and fallback to CLI
             this.useSDK = false;
             this.outputChannel.appendLine(`⚠️  Disabling SDK mode, will use CLI fallback`);
-            
+
             // Try CLI as fallback
             await this.callClaudeCodeCLIStreaming(message, files, workspaceContext, currentSessionId);
         }
@@ -439,10 +432,11 @@ export class ClaudeCodeManager implements vscode.Disposable {
      * Emit streaming message (central point for all streaming events)
      */
     private emitStreamingMessage(message: StreamingMessage): void {
-        console.log('🚀 Emitting streaming message:', message.type, message.content?.substring(0, 100));
-        console.log('🚀 Event emitter has listeners:', this._onStreamingMessage.event !== undefined);
+        this.outputChannel.appendLine(`🚀 Emitting streaming message: ${message.type} - ${message.content?.substring(0, 100)}`);
+        this.outputChannel.appendLine(`🚀 Event emitter has listeners: ${this._onStreamingMessage.event !== undefined}`);
+        
         this._onStreamingMessage.fire(message);
-        console.log('🚀 Event fired successfully');
+        this.outputChannel.appendLine('🚀 Event fired successfully');
     }
 
     /**
@@ -455,13 +449,13 @@ export class ClaudeCodeManager implements vscode.Disposable {
         currentSessionId?: string
     ): Promise<void> {
         const { spawn } = require('child_process');
-        
+
         // Prepare context for Claude
         let contextMessage = message;
-        
+
         if (workspaceContext?.currentFile) {
             contextMessage += `\n\nCurrent file: ${workspaceContext.currentFile.path}`;
-            
+
             if (workspaceContext.currentFile.selection) {
                 const selection = workspaceContext.currentFile.selection;
                 const content = workspaceContext.currentFile.content || '';
@@ -470,38 +464,38 @@ export class ClaudeCodeManager implements vscode.Disposable {
                 contextMessage += `\n\nSelected code:\n\`\`\`\n${selectedLines.join('\n')}\n\`\`\``;
             }
         }
-        
+
         if (workspaceContext?.rootPath) {
             contextMessage += `\n\nProject: ${workspaceContext.rootPath}`;
         }
-        
+
         console.log('🚀 CLI Streaming: Starting real Claude Code streaming...');
         this.outputChannel.appendLine(`📵 Starting CLI streaming for: ${message}`);
-        
+
         // Use CLI with streaming output (requires --verbose with --output-format=stream-json)
         const claudeArgs = ['--print', '--verbose', '--output-format', 'stream-json'];
         if (currentSessionId) {
             claudeArgs.push('--session-id', currentSessionId);
         }
-        
+
         const claudeProcess = spawn(this.config.claudeExecutablePath, claudeArgs, {
             cwd: workspaceContext?.rootPath || process.cwd(),
             stdio: ['pipe', 'pipe', 'pipe']
         });
-        
+
         // Send message to Claude
         claudeProcess.stdin.write(contextMessage);
         claudeProcess.stdin.end();
-        
+
         let buffer = '';
-        
+
         claudeProcess.stdout.on('data', (chunk: Buffer) => {
             buffer += chunk.toString();
-            
+
             // Process complete JSON lines
             const lines = buffer.split('\n');
             buffer = lines.pop() || ''; // Keep incomplete line in buffer
-            
+
             for (const line of lines) {
                 if (line.trim()) {
                     try {
@@ -519,13 +513,13 @@ export class ClaudeCodeManager implements vscode.Disposable {
                 }
             }
         });
-        
+
         claudeProcess.stderr.on('data', (data: Buffer) => {
             const errorText = data.toString();
             console.log('🔥 CLI Streaming Error:', errorText);
             this.outputChannel.appendLine(`❌ CLI Error: ${errorText}`);
         });
-        
+
         return new Promise((resolve, reject) => {
             claudeProcess.on('close', (code: number) => {
                 // Process any remaining buffer content
@@ -541,11 +535,11 @@ export class ClaudeCodeManager implements vscode.Disposable {
                         });
                     }
                 }
-                
+
                 if (code === 0) {
                     console.log('🎉 CLI Streaming completed successfully');
                     this.outputChannel.appendLine(`✅ CLI streaming completed successfully`);
-                    
+
                     // Emit completion
                     const finalMessage: ClaudeMessage = {
                         id: Date.now().toString(),
@@ -556,10 +550,10 @@ export class ClaudeCodeManager implements vscode.Disposable {
                             sessionId: currentSessionId
                         }
                     };
-                    
+
                     this.updateCurrentTask(finalMessage);
                     this._onStreamingComplete.fire(finalMessage);
-                    
+
                     resolve();
                 } else {
                     const error = `Claude Code process exited with code ${code}`;
@@ -568,7 +562,7 @@ export class ClaudeCodeManager implements vscode.Disposable {
                     reject(new Error(error));
                 }
             });
-            
+
             claudeProcess.on('error', (error: Error) => {
                 console.log('❌ CLI Process Error:', error);
                 this.outputChannel.appendLine(`❌ CLI process error: ${error}`);
@@ -576,13 +570,13 @@ export class ClaudeCodeManager implements vscode.Disposable {
             });
         });
     }
-    
+
     /**
      * Process streaming JSON from Claude Code CLI
      */
     private processStreamingJSON(data: any): void {
         console.log('📝 Processing CLI JSON:', data);
-        
+
         if (data.type === 'thinking') {
             this.emitStreamingMessage({
                 type: 'thinking',
@@ -631,7 +625,7 @@ export class ClaudeCodeManager implements vscode.Disposable {
                 onMessage: (streamingMessage) => {
                     console.log('🔥🔥🔥 DIRECT CALLBACK IN SDK CALL - THIS SHOULD ALWAYS APPEAR!');
                     console.log('🔥🔥🔥 Message content:', streamingMessage.content);
-                    
+
                     // Also call our original callbacks
                     if (callbacks?.onMessage) {
                         console.log('🔥🔥🔥 Calling original callback');
@@ -1090,6 +1084,35 @@ export class ClaudeCodeManager implements vscode.Disposable {
         } catch (error) {
             this.outputChannel.appendLine(`❌ Error getting permission mode: ${error}`);
             return 'default'; // Safe fallback
+        }
+    }
+
+    /**
+     * Set model for SDK
+     */
+    setModel(model: string): void {
+        try {
+            if (this.useSDK && this.sdkClient) {
+                this.sdkClient.setModel(model);
+            }
+            this.outputChannel.appendLine(`🤖 Model set to: ${model}`);
+        } catch (error) {
+            this.outputChannel.appendLine(`❌ Error setting model: ${error}`);
+        }
+    }
+
+    /**
+     * Get current model
+     */
+    getModel(): string {
+        try {
+            if (this.useSDK && this.sdkClient) {
+                return this.sdkClient.getModel();
+            }
+            return 'claude-sonnet-4-20250514'; // Default model
+        } catch (error) {
+            this.outputChannel.appendLine(`❌ Error getting model: ${error}`);
+            return 'claude-sonnet-4-20250514'; // Safe fallback
         }
     }
 

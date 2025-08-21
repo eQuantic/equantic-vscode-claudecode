@@ -3,10 +3,16 @@ import { ClaudeChatProvider } from './providers/ClaudeChatProvider';
 import { ClaudeCodeManager } from './core/ClaudeCodeManager';
 
 export function activate(context: vscode.ExtensionContext) {
-    console.log('Equantic Claude Code extension is now active!');
+    const outputChannel = vscode.window.createOutputChannel('Extension Debug');
+    outputChannel.appendLine('Equantic Claude Code extension is now active!');
 
+    outputChannel.appendLine('Creating ClaudeCodeManager...');
     const claudeManager = new ClaudeCodeManager(context);
+    outputChannel.appendLine('ClaudeCodeManager created successfully');
+    
+    outputChannel.appendLine('Creating ClaudeChatProvider...');
     const chatProvider = new ClaudeChatProvider(context, claudeManager);
+    outputChannel.appendLine('ClaudeChatProvider created successfully');
 
     // Register webview provider for chat
     const chatWebview = vscode.window.registerWebviewViewProvider(
@@ -103,7 +109,12 @@ export function activate(context: vscode.ExtensionContext) {
     // Auto-start if enabled
     const config = vscode.workspace.getConfiguration('equantic-claude-code');
     if (config.get('autoStart', true)) {
-        claudeManager.initialize();
+        outputChannel.appendLine('Starting ClaudeCodeManager initialization...');
+        claudeManager.initialize().then(() => {
+            outputChannel.appendLine('ClaudeCodeManager initialization completed');
+        }).catch(error => {
+            outputChannel.appendLine(`ClaudeCodeManager initialization failed: ${error}`);
+        });
     }
 }
 
