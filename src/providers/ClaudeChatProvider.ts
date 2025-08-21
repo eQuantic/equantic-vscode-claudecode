@@ -23,7 +23,10 @@ export class ClaudeChatProvider implements vscode.WebviewViewProvider {
 
         // Listen for streaming messages
         this.claudeManager.onStreamingMessage(streamingMessage => {
+            console.log('🎯 ClaudeChatProvider: Received streaming message:', streamingMessage.type, streamingMessage.content?.substring(0, 50));
+            console.log('🎯 ClaudeChatProvider: About to call handleStreamingMessage');
             this.handleStreamingMessage(streamingMessage);
+            console.log('🎯 ClaudeChatProvider: handleStreamingMessage completed');
         });
 
         // Listen for streaming progress
@@ -177,14 +180,18 @@ export class ClaudeChatProvider implements vscode.WebviewViewProvider {
         }
 
         // Send streaming message to webview
-        this._view.webview.postMessage({
+        const messageToSend = {
             type: 'streamingMessage',
             messageId: this.streamingMessageId,
             messageType: streamingMessage.type,
             content: processedContent,
             cssClass: cssClass,
             metadata: streamingMessage.metadata
-        });
+        };
+        console.log('🎯 ClaudeChatProvider: Sending message to webview:', messageToSend.type, messageToSend.content?.substring(0, 50));
+        console.log('🎯 ClaudeChatProvider: Webview available:', !!this._view?.webview);
+        this._view.webview.postMessage(messageToSend);
+        console.log('🎯 ClaudeChatProvider: Message posted to webview successfully');
     }
 
     private updateStreamingProgress(progress: number) {

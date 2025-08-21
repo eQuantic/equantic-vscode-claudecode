@@ -1231,7 +1231,7 @@
                             <span></span>
                             <span></span>
                         </div>
-                        <div class="typing-text">Claude está pensando...</div>
+                        <div class="typing-text" id="typingText">Claude está pensando...</div>
                     </div>
                 </div>
             </div>
@@ -1388,15 +1388,16 @@
         // Message handling
         window.addEventListener('message', event => {
             const message = event.data;
+            console.log('🎯 WebView: Received message:', message.type, message);
 
             switch (message.type) {
                 case 'streamingMessage':
-                    hideTypingIndicator();
-                    handleStreamingMessage(message.data);
+                    console.log('🎯 WebView: Handling streaming message:', message.content);
+                    handleStreamingMessage(message);
                     break;
                 case 'streamingComplete':
                     hideTypingIndicator();
-                    handleStreamingComplete(message.data);
+                    handleStreamingComplete(message);
                     break;
                 case 'streamingError':
                     hideTypingIndicator();
@@ -1494,6 +1495,16 @@
         }
 
         function handleStreamingMessage(data) {
+            // Handle thinking messages specially - show in typing indicator
+            if (data.type === 'thinking') {
+                console.log('🤔 Received thinking message:', data.content);
+                updateTypingText(data.content);
+                return; // Don't create message card for thinking
+            }
+            
+            // Hide typing indicator for actual content
+            hideTypingIndicator();
+            
             // Create or update streaming card based on content type
             createIntelligentMessageCard(data.content, data.type);
         }
@@ -1692,8 +1703,17 @@
         }
 
         // Typing indicator functions
-        function showTypingIndicator() {
+        function showTypingIndicator(customText = '') {
             if (typingIndicator) {
+                const typingTextElement = document.getElementById('typingText');
+                if (typingTextElement && customText) {
+                    // Use custom Claude Code thinking message
+                    typingTextElement.textContent = customText;
+                } else if (typingTextElement) {
+                    // Default message
+                    typingTextElement.textContent = 'Claude está pensando...';
+                }
+                
                 typingIndicator.style.display = 'flex';
                 // Smooth scroll to bottom to show the typing indicator
                 setTimeout(() => {
@@ -1702,9 +1722,26 @@
             }
         }
 
+        function updateTypingText(customText) {
+            const typingTextElement = document.getElementById('typingText');
+            if (typingTextElement && typingIndicator.style.display !== 'none') {
+                typingTextElement.textContent = customText;
+                // Add a subtle animation when text changes
+                typingTextElement.style.animation = 'fadeIn 0.3s ease-in';
+                setTimeout(() => {
+                    typingTextElement.style.animation = '';
+                }, 300);
+            }
+        }
+
         function hideTypingIndicator() {
             if (typingIndicator) {
                 typingIndicator.style.display = 'none';
+                // Reset to default text for next time
+                const typingTextElement = document.getElementById('typingText');
+                if (typingTextElement) {
+                    typingTextElement.textContent = 'Claude está pensando...';
+                }
             }
         }
 

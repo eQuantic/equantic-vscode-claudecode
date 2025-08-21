@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { ClaudeMessage, WorkspaceContext } from '../types';
+import { StreamingMessage } from './ClaudeStreamingClient';
 
 // NOTE: SDK will be dynamically imported to handle ES module compatibility
 let query: any = null;
@@ -40,6 +41,7 @@ export class ClaudeSDKClient {
     private sessionId: string | null = null;
     private conversationHistory: ClaudeMessage[] = [];
     private currentPermissionMode: PermissionMode = 'default'; // Default to 'default' mode
+    private globalSdkPath: string | null = null; // Store the detected SDK path
 
     constructor(outputChannel: vscode.OutputChannel) {
         this.outputChannel = outputChannel;
@@ -77,6 +79,41 @@ export class ClaudeSDKClient {
 
         } catch (error) {
             this.outputChannel.appendLine(`❌ Failed to initialize Claude SDK: ${error}`);
+            throw error;
+        }
+    }
+
+    /**
+     * Send a message to Claude using the SDK with real streaming
+     */
+    async sendMessageStreaming(
+        message: string,
+        workspaceContext?: WorkspaceContext,
+        sessionId?: string,
+        callbacks?: {
+            onMessage?: (message: StreamingMessage) => void;
+            onProgress?: (progress: number) => void;
+            onComplete?: (finalMessage: ClaudeMessage) => void;
+            onError?: (error: string) => void;
+        }
+    ): Promise<void> {
+        if (!this.isInitialized) {
+            throw new Error('SDK client not initialized');
+        }
+
+        try {
+            // Prepare enhanced message with context
+            const enhancedMessage = this.enhanceMessageWithContext(message, workspaceContext);
+            
+            this.outputChannel.appendLine(`📡 Starting real Claude SDK streaming...`);
+            this.outputChannel.appendLine(`Message: ${enhancedMessage.substring(0, 100)}...`);
+
+            // Use the actual Claude Code SDK with real streaming
+            await this.executeSDKQueryStreaming(enhancedMessage, sessionId, callbacks);
+
+        } catch (error) {
+            this.outputChannel.appendLine(`❌ SDK streaming call failed: ${error}`);
+            callbacks?.onError?.(error instanceof Error ? error.message : 'Unknown error');
             throw error;
         }
     }
@@ -242,6 +279,7 @@ export class ClaudeSDKClient {
                         const sdk = await import(sdkPath);
                         if (sdk && typeof sdk.query === 'function') {
                             this.outputChannel.appendLine('✅ SDK loaded successfully from global installation');
+                            this.globalSdkPath = sdkPath; // Store the successful path
                             return sdk;
                         }
                     }
@@ -304,6 +342,178 @@ export class ClaudeSDKClient {
                     sessionId: sessionId || this.sessionId || undefined
                 }
             };
+        }
+    }
+
+    /**
+     * Execute the actual SDK query with real streaming
+     */
+    private async executeSDKQueryStreaming(
+        message: string, 
+        sessionId?: string,
+        callbacks?: {
+            onMessage?: (message: StreamingMessage) => void;
+            onProgress?: (progress: number) => void;
+            onComplete?: (finalMessage: ClaudeMessage) => void;
+            onError?: (error: string) => void;
+        }
+    ): Promise<void> {
+        if (!query) {
+            throw new Error('SDK not available - using CLI fallback');
+        }
+        
+        try {
+            const sdkPermissionMode = this.currentPermissionMode === 'plan' ? 'plan' : 'acceptEdits';
+            
+            this.outputChannel.appendLine(`🎯 Starting Claude Code SDK query with real streaming...`);
+            
+            const queryIterator = query({
+                prompt: message,
+                options: {
+                    systemPrompt: this.getVSCodeSystemPrompt(),
+                    maxTurns: 3,
+                    allowedTools: this.getDefaultAllowedTools()
+                }
+            });
+
+            let fullResponse = '';
+            let messageCount = 0;
+
+            for await (const message of queryIterator) {
+                messageCount++;
+                this.outputChannel.appendLine(`📨 Received streaming message ${messageCount}: ${JSON.stringify(message).substring(0, 200)}...`);
+                
+                // Handle streaming messages based on official Claude Code SDK documentation
+                if (message.type === 'result') {
+                    // Final result - this is the complete response
+                    fullResponse = message.result;
+                    
+                    this.outputChannel.appendLine(`✅ Received final result: ${fullResponse.substring(0, 100)}...`);
+                    
+                    // Send the complete result as streaming chunks (word by word for UI effect)
+                    const words = fullResponse.split(' ');
+                    let accumulatedContent = '';
+                    
+                    this.outputChannel.appendLine(`🎯 SDK: About to stream ${words.length} words to callbacks`);
+                    this.outputChannel.appendLine(`🎯 SDK: Callbacks available: ${!!callbacks?.onMessage}`);
+                    this.outputChannel.appendLine(`🎯 SDK: Callbacks object keys: ${Object.keys(callbacks || {}).join(', ')}`);
+                    this.outputChannel.appendLine(`🎯 SDK: onMessage type: ${typeof callbacks?.onMessage}`);
+                    
+                    for (let i = 0; i < words.length; i++) {
+                        const word = words[i] + (i < words.length - 1 ? ' ' : '');
+                        accumulatedContent += word;
+                        
+                        const streamingMessage: StreamingMessage = {
+                            type: 'text',
+                            content: word,
+                            metadata: {
+                                sessionId: sessionId,
+                                progress: (i + 1) / words.length
+                            }
+                        };
+                        
+                        this.outputChannel.appendLine(`🎯 SDK: Calling onMessage with word: "${word}"`);
+                        
+                        // Test direct callback
+                        if (callbacks?.onMessage) {
+                            this.outputChannel.appendLine(`🎯 SDK: About to call callbacks.onMessage directly`);
+                            try {
+                                callbacks.onMessage(streamingMessage);
+                                this.outputChannel.appendLine(`🎯 SDK: Callback executed successfully`);
+                            } catch (error) {
+                                this.outputChannel.appendLine(`🎯 SDK: Callback execution failed: ${error}`);
+                            }
+                        } else {
+                            this.outputChannel.appendLine(`🎯 SDK: ERROR - callbacks.onMessage is missing!`);
+                        }
+                        
+                        // Small delay for streaming effect
+                        await new Promise(resolve => setTimeout(resolve, 20));
+                    }
+                    
+                    break; // Final result received, exit loop
+                    
+                } else if (message.type === 'error') {
+                    this.outputChannel.appendLine(`❌ SDK error: ${JSON.stringify(message)}`);
+                    callbacks?.onError?.(message.message || 'Unknown SDK error');
+                    return;
+                    
+                } else {
+                    // Other message types (tool usage, thinking, intermediate responses, etc.)
+                    this.outputChannel.appendLine(`📄 Intermediate message: ${message.type} - ${JSON.stringify(message).substring(0, 100)}...`);
+                    
+                    // Handle thinking messages with custom text
+                    if (message.type === 'thinking' || message.type === 'progress') {
+                        // Extract thinking message text
+                        const thinkingText = message.content || message.text || message.message || `${message.type}...`;
+                        
+                        this.outputChannel.appendLine(`🤔 Claude is thinking: "${thinkingText}"`);
+                        
+                        const thinkingMessage: StreamingMessage = {
+                            type: 'thinking',
+                            content: thinkingText,
+                            metadata: {
+                                sessionId: sessionId
+                            }
+                        };
+                        callbacks?.onMessage?.(thinkingMessage);
+                        
+                    } else if (message.type === 'tool_use') {
+                        // Handle tool usage messages
+                        const toolName = message.tool || message.name || 'unknown tool';
+                        const toolContent = `Using ${toolName}...`;
+                        
+                        const toolMessage: StreamingMessage = {
+                            type: 'tool_use',
+                            content: toolContent,
+                            metadata: {
+                                sessionId: sessionId,
+                                toolName: toolName
+                            }
+                        };
+                        callbacks?.onMessage?.(toolMessage);
+                    }
+                }
+            }
+
+            // Add to conversation history
+            this.conversationHistory.push({
+                id: Date.now().toString(),
+                role: 'user',
+                content: message,
+                timestamp: Date.now()
+            });
+
+            this.conversationHistory.push({
+                id: (Date.now() + 1).toString(),
+                role: 'assistant',
+                content: fullResponse,
+                timestamp: Date.now(),
+                metadata: {
+                    sessionId: sessionId || this.sessionId || undefined
+                }
+            });
+
+            // Send final completion message
+            const finalMessage: ClaudeMessage = {
+                id: (Date.now() + 1).toString(),
+                role: 'assistant',
+                content: fullResponse,
+                timestamp: Date.now(),
+                metadata: {
+                    sessionId: sessionId || this.sessionId || undefined,
+                    streamingComplete: true,
+                    messageCount: messageCount
+                }
+            };
+
+            callbacks?.onComplete?.(finalMessage);
+            this.outputChannel.appendLine(`✅ Real SDK streaming completed with ${messageCount} chunks`);
+
+        } catch (error) {
+            this.outputChannel.appendLine(`❌ SDK streaming execution failed: ${error}`);
+            callbacks?.onError?.(error instanceof Error ? error.message : 'Unknown error');
+            throw error;
         }
     }
 
@@ -452,11 +662,19 @@ Your goal is to be a seamless coding assistant integrated into the developer's w
     }
 
     /**
+     * Get the detected global SDK path for dynamic imports
+     */
+    getGlobalSDKPath(): string | null {
+        return this.globalSdkPath;
+    }
+
+    /**
      * Dispose resources
      */
     dispose(): void {
         this.isInitialized = false;
         this.sessionId = null;
         this.conversationHistory = [];
+        this.globalSdkPath = null;
     }
 }

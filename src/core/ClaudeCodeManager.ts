@@ -248,45 +248,370 @@ export class ClaudeCodeManager implements vscode.Disposable {
         this.updateCurrentTask(userMessage);
         this.outputChannel.appendLine(`User: ${message}`);
 
-        // Create streaming callbacks
-        const callbacks: StreamingCallbacks = {
-            onMessage: (streamingMessage: StreamingMessage) => {
-                this._onStreamingMessage.fire(streamingMessage);
-            },
-            onProgress: (progress: number) => {
-                this._onStreamingProgress.fire(progress);
-            },
-            onComplete: (finalMessage: ClaudeMessage) => {
-                this.updateCurrentTask(finalMessage);
-                this._onStreamingComplete.fire(finalMessage);
-                this._onMessageReceived.fire(finalMessage);
-            },
-            onError: (error: string) => {
-                const errorMessage: ClaudeMessage = {
-                    id: Date.now().toString(),
-                    role: 'assistant',
-                    content: `❌ **Streaming Error**: ${error}`,
-                    timestamp: Date.now()
-                };
-                this.updateCurrentTask(errorMessage);
-                this._onMessageReceived.fire(errorMessage);
-            }
-        };
-
         // Get workspace context and session ID
         const workspaceContext = this.getWorkspaceContext();
         const currentSessionId = this.currentTask?.metadata?.sessionId;
 
-        // Use SDK if available, otherwise use CLI streaming client
+        // SOLUÇÃO DEFINITIVA: Usar API query correta do SDK com async iteration
         if (this.useSDK) {
-            await this.callClaudeSDKStreaming(message, files, callbacks, workspaceContext, currentSessionId);
+            console.log('🚀 ClaudeCodeManager: Using correct SDK query API with async iteration');
+            await this.callClaudeSDKQueryAPI(message, files, workspaceContext, currentSessionId);
         } else {
-            await this.streamingClient.sendMessageStreaming(
-                message,
-                workspaceContext,
-                currentSessionId,
-                callbacks
-            );
+            console.log('🚀 ClaudeCodeManager: Using CLI streaming solution');
+            await this.callClaudeCodeCLIStreaming(message, files, workspaceContext, currentSessionId);
+        }
+    }
+
+    /**
+     * New SDK implementation using correct query API with async iteration
+     */
+    private async callClaudeSDKQueryAPI(
+        message: string,
+        files?: string[],
+        workspaceContext?: WorkspaceContext,
+        currentSessionId?: string
+    ): Promise<void> {
+        try {
+            console.log('🎆 SDK Query API: Starting correct streaming implementation');
+            this.outputChannel.appendLine(`🎆 Starting SDK query API streaming...`);
+            
+            // Import the query function using dynamic global path detection
+            const sdkPath = this.sdkClient.getGlobalSDKPath();
+            if (!sdkPath) {
+                throw new Error('SDK path not available');
+            }
+            const sdkModule = await import(sdkPath);
+            const { query } = sdkModule;
+            
+            // Prepare context message
+            let contextMessage = message;
+            if (workspaceContext?.currentFile) {
+                contextMessage += `\n\nCurrent file: ${workspaceContext.currentFile.path}`;
+                
+                if (workspaceContext.currentFile.selection) {
+                    const selection = workspaceContext.currentFile.selection;
+                    const content = workspaceContext.currentFile.content || '';
+                    const lines = content.split('\n');
+                    const selectedLines = lines.slice(selection.start.line, selection.end.line + 1);
+                    contextMessage += `\n\nSelected code:\n\`\`\`\n${selectedLines.join('\n')}\n\`\`\``;
+                }
+            }
+            
+            if (workspaceContext?.rootPath) {
+                contextMessage += `\n\nProject: ${workspaceContext.rootPath}`;
+            }
+            
+            // Use the correct query API with async iteration
+            console.log('🎆 SDK Query: About to start async iteration...');
+            const queryIterable = query({
+                prompt: contextMessage,
+                options: {
+                    permissionMode: this.getPermissionMode() || 'default',
+                    maxTurns: 5
+                }
+            });
+            
+            console.log('🎆 SDK Query: Query iterable created, starting loop...');
+            let messageCount = 0;
+            
+            for await (const sdkMessage of queryIterable) {
+                messageCount++;
+                console.log(`🎆 SDK Query: Received message #${messageCount}, type:`, sdkMessage.type);
+                console.log('🎆 SDK Query: Full message:', JSON.stringify(sdkMessage, null, 2));
+                this.outputChannel.appendLine(`SDK Message #${messageCount}: ${sdkMessage.type} - ${JSON.stringify(sdkMessage).substring(0, 200)}...`);
+                
+                // DEBUG: Test all conditions
+                console.log('🔴 CONDITION TEST:');
+                console.log('  - type === "system":', sdkMessage.type === 'system');
+                console.log('  - type === "assistant":', sdkMessage.type === 'assistant');
+                console.log('  - type === "user":', sdkMessage.type === 'user');
+                console.log('  - type === "result":', sdkMessage.type === 'result');
+                console.log('  - actual type:', JSON.stringify(sdkMessage.type));
+                
+                if (sdkMessage.type === 'system' && sdkMessage.subtype === 'init') {
+                    console.log('🎆 SDK System Init:', {
+                        model: sdkMessage.model,
+                        permissionMode: sdkMessage.permissionMode,
+                        tools: sdkMessage.tools?.length || 0,
+                        mcp_servers: sdkMessage.mcp_servers?.length || 0
+                    });
+                } else if (sdkMessage.type === 'assistant') {
+                    console.log('🔥 FOUND ASSISTANT MESSAGE!');
+                    console.log('🎆 Processing assistant message...');
+                    // Assistant message from Claude - this contains the actual response content
+                    const content = sdkMessage.message.content;
+                    console.log('🎆 Content type:', Array.isArray(content) ? 'array' : typeof content);
+                    console.log('🎆 Content:', content);
+                    
+                    if (Array.isArray(content)) {
+                        console.log(`🎆 Processing ${content.length} content blocks...`);
+                        // Handle content blocks
+                        for (const block of content) {
+                            console.log('🎆 Block type:', block.type);
+                            if (block.type === 'text') {
+                                console.log('🎆 Emitting text block:', block.text?.substring(0, 50));
+                                this.emitStreamingMessage({
+                                    type: 'text',
+                                    content: block.text
+                                });
+                            } else if (block.type === 'tool_use') {
+                                console.log('🎆 Emitting tool_use block:', block.name);
+                                this.emitStreamingMessage({
+                                    type: 'tool_use',
+                                    content: `Using tool: ${block.name}`,
+                                    metadata: {
+                                        toolName: block.name
+                                    }
+                                });
+                            }
+                        }
+                    } else if (typeof content === 'string') {
+                        console.log('🎆 Emitting string content:', content?.substring(0, 50));
+                        this.emitStreamingMessage({
+                            type: 'text',
+                            content: content
+                        });
+                    } else {
+                        console.log('🎆 Unknown content format:', typeof content, content);
+                    }
+                } else if (sdkMessage.type === 'user') {
+                    // User message echo - usually not needed for display
+                    console.log('🎆 SDK User message echo');
+                } else if (sdkMessage.type === 'result') {
+                    // Final result message
+                    if (sdkMessage.subtype === 'success') {
+                        console.log('🎆 SDK Success result:', {
+                            duration: sdkMessage.duration_ms,
+                            turns: sdkMessage.num_turns,
+                            cost: sdkMessage.total_cost_usd
+                        });
+                        
+                        // The result contains the final formatted output
+                        if (sdkMessage.result) {
+                            this.emitStreamingMessage({
+                                type: 'text',
+                                content: sdkMessage.result
+                            });
+                        }
+                    } else {
+                        // Error result
+                        console.log('🎆 SDK Error result:', sdkMessage.subtype);
+                        this.emitStreamingMessage({
+                            type: 'text',
+                            content: `Error: ${sdkMessage.subtype}`
+                        });
+                    }
+                }
+            }
+            
+            console.log(`🎉 SDK Query API: Streaming completed successfully - processed ${messageCount} messages`);
+            this.outputChannel.appendLine(`✅ SDK query API streaming completed successfully - processed ${messageCount} messages`);
+            
+            // Emit completion
+            const finalMessage: ClaudeMessage = {
+                id: Date.now().toString(),
+                role: 'assistant',
+                content: `SDK streaming response completed`,
+                timestamp: Date.now(),
+                metadata: {
+                    sessionId: currentSessionId
+                }
+            };
+            
+            this.updateCurrentTask(finalMessage);
+            this._onStreamingComplete.fire(finalMessage);
+            
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            console.log('❌ SDK Query API failed:', errorMessage);
+            this.outputChannel.appendLine(`❌ SDK query API failed: ${errorMessage}`);
+            
+            // Disable SDK and fallback to CLI
+            this.useSDK = false;
+            this.outputChannel.appendLine(`⚠️  Disabling SDK mode, will use CLI fallback`);
+            
+            // Try CLI as fallback
+            await this.callClaudeCodeCLIStreaming(message, files, workspaceContext, currentSessionId);
+        }
+    }
+
+    /**
+     * Emit streaming message (central point for all streaming events)
+     */
+    private emitStreamingMessage(message: StreamingMessage): void {
+        console.log('🚀 Emitting streaming message:', message.type, message.content?.substring(0, 100));
+        console.log('🚀 Event emitter has listeners:', this._onStreamingMessage.event !== undefined);
+        this._onStreamingMessage.fire(message);
+        console.log('🚀 Event fired successfully');
+    }
+
+    /**
+     * CLI-based streaming implementation as fallback
+     */
+    private async callClaudeCodeCLIStreaming(
+        message: string,
+        files?: string[],
+        workspaceContext?: WorkspaceContext,
+        currentSessionId?: string
+    ): Promise<void> {
+        const { spawn } = require('child_process');
+        
+        // Prepare context for Claude
+        let contextMessage = message;
+        
+        if (workspaceContext?.currentFile) {
+            contextMessage += `\n\nCurrent file: ${workspaceContext.currentFile.path}`;
+            
+            if (workspaceContext.currentFile.selection) {
+                const selection = workspaceContext.currentFile.selection;
+                const content = workspaceContext.currentFile.content || '';
+                const lines = content.split('\n');
+                const selectedLines = lines.slice(selection.start.line, selection.end.line + 1);
+                contextMessage += `\n\nSelected code:\n\`\`\`\n${selectedLines.join('\n')}\n\`\`\``;
+            }
+        }
+        
+        if (workspaceContext?.rootPath) {
+            contextMessage += `\n\nProject: ${workspaceContext.rootPath}`;
+        }
+        
+        console.log('🚀 CLI Streaming: Starting real Claude Code streaming...');
+        this.outputChannel.appendLine(`📵 Starting CLI streaming for: ${message}`);
+        
+        // Use CLI with streaming output (requires --verbose with --output-format=stream-json)
+        const claudeArgs = ['--print', '--verbose', '--output-format', 'stream-json'];
+        if (currentSessionId) {
+            claudeArgs.push('--session-id', currentSessionId);
+        }
+        
+        const claudeProcess = spawn(this.config.claudeExecutablePath, claudeArgs, {
+            cwd: workspaceContext?.rootPath || process.cwd(),
+            stdio: ['pipe', 'pipe', 'pipe']
+        });
+        
+        // Send message to Claude
+        claudeProcess.stdin.write(contextMessage);
+        claudeProcess.stdin.end();
+        
+        let buffer = '';
+        
+        claudeProcess.stdout.on('data', (chunk: Buffer) => {
+            buffer += chunk.toString();
+            
+            // Process complete JSON lines
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || ''; // Keep incomplete line in buffer
+            
+            for (const line of lines) {
+                if (line.trim()) {
+                    try {
+                        const data = JSON.parse(line);
+                        this.processStreamingJSON(data);
+                    } catch (error) {
+                        // Not JSON, treat as regular text
+                        if (line.trim()) {
+                            this.emitStreamingMessage({
+                                type: 'text',
+                                content: line.trim()
+                            });
+                        }
+                    }
+                }
+            }
+        });
+        
+        claudeProcess.stderr.on('data', (data: Buffer) => {
+            const errorText = data.toString();
+            console.log('🔥 CLI Streaming Error:', errorText);
+            this.outputChannel.appendLine(`❌ CLI Error: ${errorText}`);
+        });
+        
+        return new Promise((resolve, reject) => {
+            claudeProcess.on('close', (code: number) => {
+                // Process any remaining buffer content
+                if (buffer.trim()) {
+                    try {
+                        const data = JSON.parse(buffer);
+                        this.processStreamingJSON(data);
+                    } catch (error) {
+                        // Treat as final text
+                        this.emitStreamingMessage({
+                            type: 'text',
+                            content: buffer.trim()
+                        });
+                    }
+                }
+                
+                if (code === 0) {
+                    console.log('🎉 CLI Streaming completed successfully');
+                    this.outputChannel.appendLine(`✅ CLI streaming completed successfully`);
+                    
+                    // Emit completion
+                    const finalMessage: ClaudeMessage = {
+                        id: Date.now().toString(),
+                        role: 'assistant',
+                        content: `Streaming response completed`,
+                        timestamp: Date.now(),
+                        metadata: {
+                            sessionId: currentSessionId
+                        }
+                    };
+                    
+                    this.updateCurrentTask(finalMessage);
+                    this._onStreamingComplete.fire(finalMessage);
+                    
+                    resolve();
+                } else {
+                    const error = `Claude Code process exited with code ${code}`;
+                    console.log('❌ CLI Streaming failed:', error);
+                    this.outputChannel.appendLine(`❌ CLI streaming failed: ${error}`);
+                    reject(new Error(error));
+                }
+            });
+            
+            claudeProcess.on('error', (error: Error) => {
+                console.log('❌ CLI Process Error:', error);
+                this.outputChannel.appendLine(`❌ CLI process error: ${error}`);
+                reject(error);
+            });
+        });
+    }
+    
+    /**
+     * Process streaming JSON from Claude Code CLI
+     */
+    private processStreamingJSON(data: any): void {
+        console.log('📝 Processing CLI JSON:', data);
+        
+        if (data.type === 'thinking') {
+            this.emitStreamingMessage({
+                type: 'thinking',
+                content: data.content || data.text || ''
+            });
+        } else if (data.type === 'text' || data.type === 'assistant') {
+            this.emitStreamingMessage({
+                type: 'text',
+                content: data.content || data.text || ''
+            });
+        } else if (data.type === 'tool_use') {
+            this.emitStreamingMessage({
+                type: 'tool_use',
+                content: `Using tool: ${data.name || 'Unknown'}`,
+                metadata: {
+                    toolName: data.name
+                }
+            });
+        } else if (data.type === 'tool_result') {
+            this.emitStreamingMessage({
+                type: 'tool_result',
+                content: data.content || 'Tool execution completed'
+            });
+        } else {
+            // Generic streaming content
+            this.emitStreamingMessage({
+                type: 'text',
+                content: JSON.stringify(data)
+            });
         }
     }
 
@@ -298,70 +623,37 @@ export class ClaudeCodeManager implements vscode.Disposable {
         currentSessionId?: string
     ): Promise<void> {
         try {
-            this.outputChannel.appendLine(`📡 Starting SDK streaming response...`);
+            console.log('🎯 ClaudeCodeManager: callClaudeSDKStreaming - callbacks available:', !!callbacks?.onMessage);
+            this.outputChannel.appendLine(`📡 Starting real SDK streaming response...`);
 
-            // Send message using SDK (non-streaming for now, we'll simulate streaming)
-            const response = await this.sdkClient.sendMessage(message, workspaceContext, currentSessionId);
-
-            // Simulate streaming by breaking response into chunks
-            const content = response.content;
-            const chunks = content.split(' '); // Split by words for streaming effect
-            let accumulatedContent = '';
-
-            // Send each chunk as streaming message
-            for (let i = 0; i < chunks.length; i++) {
-                const chunk = chunks[i] + (i < chunks.length - 1 ? ' ' : '');
-                accumulatedContent += chunk;
-
-                // Send streaming message
-                callbacks?.onMessage?.({
-                    type: 'text',
-                    content: chunk,
-                    metadata: {
-                        sessionId: currentSessionId,
-                        progress: (i + 1) / chunks.length
+            // Use the SDK's real streaming functionality - NO SIMULATION  
+            await this.sdkClient.sendMessageStreaming(message, workspaceContext, currentSessionId, {
+                onMessage: (streamingMessage) => {
+                    console.log('🔥🔥🔥 DIRECT CALLBACK IN SDK CALL - THIS SHOULD ALWAYS APPEAR!');
+                    console.log('🔥🔥🔥 Message content:', streamingMessage.content);
+                    
+                    // Also call our original callbacks
+                    if (callbacks?.onMessage) {
+                        console.log('🔥🔥🔥 Calling original callback');
+                        callbacks.onMessage(streamingMessage);
+                    } else {
+                        console.log('🔥🔥🔥 Original callback is MISSING!');
                     }
-                });
-
-                // Progress update
-                callbacks?.onProgress?.((i + 1) / chunks.length);
-
-                // Small delay to simulate streaming
-                await new Promise(resolve => setTimeout(resolve, 50));
-            }
-
-            // Create final message
-            const finalMessage: ClaudeMessage = {
-                id: Date.now().toString(),
-                role: 'assistant',
-                content: content,
-                timestamp: Date.now(),
-                metadata: {
-                    ...response.metadata,
-                    sessionId: response.metadata?.sessionId || currentSessionId,
-                    streamingComplete: true
+                },
+                onProgress: (progress) => {
+                    callbacks?.onProgress?.(progress);
+                },
+                onComplete: (finalMessage) => {
+                    // Update current task with the real final message
+                    this.updateCurrentTask(finalMessage);
+                    callbacks?.onComplete?.(finalMessage);
+                },
+                onError: (error) => {
+                    callbacks?.onError?.(error);
                 }
-            };
+            });
 
-            // Update current task with session ID if we got one
-            if (response.metadata?.sessionId && this.currentTask) {
-                this.currentTask.metadata = {
-                    ...this.currentTask.metadata,
-                    sessionId: response.metadata.sessionId
-                };
-            }
-
-            this.updateCurrentTask(finalMessage);
-            callbacks?.onComplete?.(finalMessage);
-
-            // Log success
-            if (response.metadata?.usage) {
-                this.outputChannel.appendLine(
-                    `✅ SDK Streaming completed (${response.metadata.usage.inputTokens} input, ${response.metadata.usage.outputTokens} output tokens)`
-                );
-            } else {
-                this.outputChannel.appendLine(`✅ SDK Streaming completed`);
-            }
+            this.outputChannel.appendLine(`✅ Real SDK streaming completed successfully`);
 
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
