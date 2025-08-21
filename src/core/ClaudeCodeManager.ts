@@ -48,7 +48,7 @@ export class ClaudeCodeManager implements vscode.Disposable {
         this.sdkClient = new ClaudeSDKClient(this.outputChannel);
         this.streamingClient = new ClaudeStreamingClient(this.outputChannel);
         this.updateConfig();
-        
+
         // Listen for configuration changes
         vscode.workspace.onDidChangeConfiguration(e => {
             if (e.affectsConfiguration('equantic-claude-code')) {
@@ -74,24 +74,24 @@ export class ClaudeCodeManager implements vscode.Disposable {
         }
 
         this.outputChannel.appendLine('🚀 Initializing Claude Code Manager...');
-        
+
         try {
-            // Step 1: Try to initialize SDK with conservative timeout
-            this.outputChannel.appendLine('🎯 Attempting to initialize Claude Code SDK with safe timeout...');
+            // Step 1: Try to initialize SDK (now with global path detection)
+            this.outputChannel.appendLine('🎯 Attempting to initialize Claude Code SDK from global installation...');
             try {
-                // Very short timeout to prevent blocking
+                // Increased timeout since global import might take longer
                 const sdkInitPromise = this.sdkClient.initialize({
                     maxTokens: this.config.maxTokens,
                     temperature: this.config.temperature
                 });
-                
+
                 const timeoutPromise = new Promise<never>((_, reject) => {
-                    setTimeout(() => reject(new Error('SDK initialization timeout')), 3000); // Only 3 seconds
+                    setTimeout(() => reject(new Error('SDK initialization timeout')), 10000); // 10 seconds
                 });
 
                 await Promise.race([sdkInitPromise, timeoutPromise]);
                 this.useSDK = true;
-                this.outputChannel.appendLine('✨ Successfully initialized Claude Code SDK!');
+                this.outputChannel.appendLine('✨ Successfully initialized Claude Code SDK from global installation!');
             } catch (sdkError) {
                 this.outputChannel.appendLine(`⚠️  SDK initialization failed: ${sdkError}. Falling back to CLI...`);
                 this.useSDK = false;
@@ -100,14 +100,14 @@ export class ClaudeCodeManager implements vscode.Disposable {
             // Step 2: Detect Claude Code installation (needed for CLI fallback and session management)
             this.outputChannel.appendLine('🔍 Detecting Claude Code installation...');
             this.installation = await this.installationDetector.detectInstallation();
-            
+
             if (!this.useSDK && !this.installation.isWorking) {
                 throw new Error(`Claude Code installation not working and SDK not available: ${this.installation.executablePath}`);
             }
 
             // Step 3: Update session manager with correct paths
             this.sessionManager = new ClaudeSessionManager(this.outputChannel, this.installation?.projectsDir);
-            
+
             // Step 4: Update config with detected executable (for CLI fallback)
             if (this.installation) {
                 this.config.claudeExecutablePath = this.installation.executablePath;
@@ -117,19 +117,19 @@ export class ClaudeCodeManager implements vscode.Disposable {
             this.outputChannel.appendLine('🌟 Starting Claude Code session...');
             await this.startClaudeSession();
             this.isInitialized = true;
-            
+
             // Step 6: Show success message with installation info
             const installationInfo = this.installation ? this.installationDetector.getInstallationInfo(this.installation) : 'SDK Only Mode';
             const integrationMode = this.useSDK ? '🎯 **Integration Mode:** Claude Code SDK (Preferred)' : '🔧 **Integration Mode:** Claude Code CLI (Fallback)';
             this.outputChannel.appendLine(`✅ Claude Code initialized successfully!\n\n${integrationMode}\n\n${installationInfo}`);
-            
+
             if (this.config.showNotifications) {
                 vscode.window.showInformationMessage(`Claude Code (${this.installation.type}) initialized successfully!`);
             }
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             this.outputChannel.appendLine(`❌ Error initializing Claude Code: ${errorMessage}`);
-            
+
             // Try to provide helpful suggestions
             const suggestions = await this.installationDetector.diagnoseProblem();
             if (suggestions.length > 0) {
@@ -152,16 +152,16 @@ export class ClaudeCodeManager implements vscode.Disposable {
         // For now, we'll simulate a successful connection
         // In a production version, this would establish the actual PTY connection
         this.outputChannel.appendLine('Simulating Claude Code connection...');
-        
+
         // Simulate some delay
         await new Promise(resolve => setTimeout(resolve, 1000));
-        
+
         this.outputChannel.appendLine('Claude Code connection established (simulated)');
     }
 
     private handleTerminalOutput(data: string) {
         this.outputChannel.append(data);
-        
+
         // Parse Claude's responses and tool calls
         try {
             const lines = data.split('\n').filter(line => line.trim());
@@ -277,13 +277,101 @@ export class ClaudeCodeManager implements vscode.Disposable {
         const workspaceContext = this.getWorkspaceContext();
         const currentSessionId = this.currentTask?.metadata?.sessionId;
 
-        // Use streaming client
-        await this.streamingClient.sendMessageStreaming(
-            message,
-            workspaceContext,
-            currentSessionId,
-            callbacks
-        );
+        // Use SDK if available, otherwise use CLI streaming client
+        if (this.useSDK) {
+            await this.callClaudeSDKStreaming(message, files, callbacks, workspaceContext, currentSessionId);
+        } else {
+            await this.streamingClient.sendMessageStreaming(
+                message,
+                workspaceContext,
+                currentSessionId,
+                callbacks
+            );
+        }
+    }
+
+    private async callClaudeSDKStreaming(
+        message: string,
+        files?: string[],
+        callbacks?: StreamingCallbacks,
+        workspaceContext?: WorkspaceContext,
+        currentSessionId?: string
+    ): Promise<void> {
+        try {
+            this.outputChannel.appendLine(`📡 Starting SDK streaming response...`);
+
+            // Send message using SDK (non-streaming for now, we'll simulate streaming)
+            const response = await this.sdkClient.sendMessage(message, workspaceContext, currentSessionId);
+
+            // Simulate streaming by breaking response into chunks
+            const content = response.content;
+            const chunks = content.split(' '); // Split by words for streaming effect
+            let accumulatedContent = '';
+
+            // Send each chunk as streaming message
+            for (let i = 0; i < chunks.length; i++) {
+                const chunk = chunks[i] + (i < chunks.length - 1 ? ' ' : '');
+                accumulatedContent += chunk;
+
+                // Send streaming message
+                callbacks?.onMessage?.({
+                    type: 'text',
+                    content: chunk,
+                    metadata: {
+                        sessionId: currentSessionId,
+                        progress: (i + 1) / chunks.length
+                    }
+                });
+
+                // Progress update
+                callbacks?.onProgress?.((i + 1) / chunks.length);
+
+                // Small delay to simulate streaming
+                await new Promise(resolve => setTimeout(resolve, 50));
+            }
+
+            // Create final message
+            const finalMessage: ClaudeMessage = {
+                id: Date.now().toString(),
+                role: 'assistant',
+                content: content,
+                timestamp: Date.now(),
+                metadata: {
+                    ...response.metadata,
+                    sessionId: response.metadata?.sessionId || currentSessionId,
+                    streamingComplete: true
+                }
+            };
+
+            // Update current task with session ID if we got one
+            if (response.metadata?.sessionId && this.currentTask) {
+                this.currentTask.metadata = {
+                    ...this.currentTask.metadata,
+                    sessionId: response.metadata.sessionId
+                };
+            }
+
+            this.updateCurrentTask(finalMessage);
+            callbacks?.onComplete?.(finalMessage);
+
+            // Log success
+            if (response.metadata?.usage) {
+                this.outputChannel.appendLine(
+                    `✅ SDK Streaming completed (${response.metadata.usage.inputTokens} input, ${response.metadata.usage.outputTokens} output tokens)`
+                );
+            } else {
+                this.outputChannel.appendLine(`✅ SDK Streaming completed`);
+            }
+
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            this.outputChannel.appendLine(`❌ SDK streaming failed: ${errorMessage}`);
+            callbacks?.onError?.(errorMessage);
+
+            // Disable SDK for future calls
+            this.useSDK = false;
+            this.outputChannel.appendLine(`⚠️  Disabling SDK mode, will use CLI fallback`);
+        }
     }
 
     private async callClaudeSDK(message: string, files?: string[]): Promise<void> {
@@ -317,7 +405,7 @@ export class ClaudeCodeManager implements vscode.Disposable {
 
             this.updateCurrentTask(assistantMessage);
             this._onMessageReceived.fire(assistantMessage);
-            
+
             // Log success with usage info
             if (response.metadata?.usage) {
                 this.outputChannel.appendLine(
@@ -329,7 +417,7 @@ export class ClaudeCodeManager implements vscode.Disposable {
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             this.outputChannel.appendLine(`❌ SDK call failed: ${errorMessage}`);
-            
+
             // Create error message for user
             const errorResponse: ClaudeMessage = {
                 id: Date.now().toString(),
@@ -350,13 +438,13 @@ export class ClaudeCodeManager implements vscode.Disposable {
     private async callClaudeCodeCLI(message: string, files?: string[]): Promise<void> {
         const { exec } = require('child_process');
         const workspaceContext = this.getWorkspaceContext();
-        
+
         // Prepare context for Claude
         let contextMessage = message;
-        
+
         if (workspaceContext.currentFile) {
             contextMessage += `\n\nCurrent file: ${workspaceContext.currentFile.path}`;
-            
+
             if (workspaceContext.currentFile.selection) {
                 const selection = workspaceContext.currentFile.selection;
                 const content = workspaceContext.currentFile.content || '';
@@ -365,7 +453,7 @@ export class ClaudeCodeManager implements vscode.Disposable {
                 contextMessage += `\n\nSelected code:\n\`\`\`\n${selectedLines.join('\n')}\n\`\`\``;
             }
         }
-        
+
         if (workspaceContext.rootPath) {
             contextMessage += `\n\nProject: ${workspaceContext.rootPath}`;
         }
@@ -376,28 +464,28 @@ export class ClaudeCodeManager implements vscode.Disposable {
         // Session management will be handled differently
         const claudeArgs = ['--print'];
         const command = `${this.config.claudeExecutablePath} ${claudeArgs.join(' ')} "${contextMessage.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`;
-        
-        exec(command, { 
+
+        exec(command, {
             timeout: 60000,
             maxBuffer: 1024 * 1024, // 1MB
             cwd: workspaceContext.rootPath || process.cwd()
         }, (error: any, stdout: string, stderr: string) => {
             if (error) {
                 this.outputChannel.appendLine(`Claude Code error: ${error.message}`);
-                
+
                 const errorMessage: ClaudeMessage = {
                     id: Date.now().toString(),
                     role: 'assistant',
                     content: `❌ Erro ao conectar com Claude Code:\n\`\`\`\n${error.message}\n\`\`\`\n\n💡 **Possíveis soluções:**\n1. Verifique se Claude Code está instalado: \`npm install -g @anthropic-ai/claude-code\`\n2. Configure sua API key: \`claude config\`\n3. Teste no terminal: \`echo "teste" | claude\`\n\nSe continuar com problemas, verifique as configurações da extensão.`,
                     timestamp: Date.now()
                 };
-                
+
                 this.updateCurrentTask(errorMessage);
                 this._onMessageReceived.fire(errorMessage);
             } else {
                 const response = stdout.trim() || stderr.trim();
                 this.outputChannel.appendLine(`Claude Code response: ${response}`);
-                
+
                 if (response) {
                     const assistantMessage: ClaudeMessage = {
                         id: Date.now().toString(),
@@ -405,7 +493,7 @@ export class ClaudeCodeManager implements vscode.Disposable {
                         content: response,
                         timestamp: Date.now()
                     };
-                    
+
                     this.updateCurrentTask(assistantMessage);
                     this._onMessageReceived.fire(assistantMessage);
                 } else {
@@ -415,7 +503,7 @@ export class ClaudeCodeManager implements vscode.Disposable {
                         content: `⚠️ Claude Code não retornou resposta.\n\nVerifique se:\n1. Sua API key está configurada\n2. O comando funciona no terminal: \`echo "teste" | claude\`\n3. Há conectividade com a internet`,
                         timestamp: Date.now()
                     };
-                    
+
                     this.updateCurrentTask(noResponseMessage);
                     this._onMessageReceived.fire(noResponseMessage);
                 }
@@ -430,28 +518,28 @@ export class ClaudeCodeManager implements vscode.Disposable {
     async loadClaudeCodeSessions(): Promise<ClaudeTask[]> {
         try {
             this.outputChannel.appendLine(`🔄 Starting to load Claude Code sessions...`);
-            
+
             // Get real Claude Code sessions from the session manager
             const realSessions = await this.sessionManager.getProjectSessions();
             this.outputChannel.appendLine(`📄 Found ${realSessions.length} real Claude sessions`);
-            
+
             // Log first few sessions for debug
             if (realSessions.length > 0) {
                 this.outputChannel.appendLine(`📋 First session example: ${realSessions[0].title} (${realSessions[0].id})`);
             }
-            
+
             // Combine with any local tasks (for compatibility)
             const allSessions = [...realSessions, ...this.tasks];
             this.outputChannel.appendLine(`📊 Local tasks: ${this.tasks.length}, Combined: ${allSessions.length}`);
-            
+
             // Remove duplicates based on session ID
-            const uniqueSessions = allSessions.filter((session, index, arr) => 
+            const uniqueSessions = allSessions.filter((session, index, arr) =>
                 arr.findIndex(s => s.id === session.id) === index
             );
-            
+
             // Sort by most recent
             uniqueSessions.sort((a, b) => b.updatedAt - a.updatedAt);
-            
+
             this.outputChannel.appendLine(`✅ Loaded ${uniqueSessions.length} total sessions (${realSessions.length} from Claude Code CLI)`);
             return uniqueSessions;
         } catch (error) {
@@ -463,7 +551,7 @@ export class ClaudeCodeManager implements vscode.Disposable {
 
     private generateResponse(message: string, files?: string[], context?: WorkspaceContext): string {
         const msg = message.toLowerCase().trim();
-        
+
         // Greeting responses
         if (msg.includes('olá') || msg.includes('oi') || msg.includes('hello') || msg.includes('hi')) {
             if (msg.includes('funciona') || msg.includes('working') || msg.includes('funcionando')) {
@@ -471,7 +559,7 @@ export class ClaudeCodeManager implements vscode.Disposable {
             }
             return `Olá! 👋 Estou aqui e pronto para ajudar.\n\n${context?.currentFile ? `Vejo que você está trabalhando no arquivo: **${context.currentFile.path.split('/').pop()}**\n\n` : ''}Como posso ajudar você hoje?`;
         }
-        
+
         // Code analysis requests
         if (msg.includes('analise') || msg.includes('analyze') || msg.includes('explique') || msg.includes('explain')) {
             if (context?.currentFile) {
@@ -481,12 +569,12 @@ export class ClaudeCodeManager implements vscode.Disposable {
             }
             return "Para analisar código, abra um arquivo e selecione o trecho que deseja que eu examine. Também posso analisar arquivos inteiros ou explicar conceitos específicos.";
         }
-        
+
         // Help requests
         if (msg.includes('help') || msg.includes('ajuda') || msg.includes('como')) {
             return `Posso ajudar com várias tarefas de desenvolvimento:\n\n**📝 Análise de Código**\n• Explicar funções e algoritmos\n• Identificar bugs e problemas\n• Sugerir melhorias\n\n**🔧 Desenvolvimento**\n• Implementar novas funcionalidades\n• Refatorar código existente\n• Criar testes\n\n**📚 Documentação**\n• Gerar comentários\n• Criar README files\n• Documentar APIs\n\n**🛠️ Como usar:**\n• Abra arquivos que quer analisar\n• Selecione código específico se necessário\n• Faça perguntas específicas\n\nQual tarefa você tem em mente?`;
         }
-        
+
         // File/project questions
         if (msg.includes('arquivo') || msg.includes('file') || msg.includes('projeto') || msg.includes('project')) {
             if (context?.rootPath) {
@@ -496,7 +584,7 @@ export class ClaudeCodeManager implements vscode.Disposable {
             }
             return "Não vejo nenhum projeto aberto. Abra uma pasta no VS Code e eu poderei ajudar com os arquivos do seu projeto.";
         }
-        
+
         // Default response
         return `Entendi sua mensagem: "${message}"\n\n💡 **Dica:** Esta é uma resposta simulada da extensão. Para respostas reais do Claude Code:\n\n1. Configure suas credenciais do Claude\n2. Teste no terminal: \`echo "teste" | claude\`\n3. A extensão se conectará automaticamente\n\nEnquanto isso, posso simular ajuda com código, explicações e análises básicas. O que gostaria de experimentar?`;
     }
@@ -526,7 +614,7 @@ export class ClaudeCodeManager implements vscode.Disposable {
         this.tasks.unshift(task);
         this.currentTask = task;
         this._onTaskUpdate.fire(task);
-        
+
         this.outputChannel.appendLine(`🆕 Started new task with session ID: ${sessionId} (${this.useSDK ? 'SDK' : 'CLI'} mode)`);
     }
 
@@ -550,7 +638,7 @@ export class ClaudeCodeManager implements vscode.Disposable {
         if (this.currentTask) {
             this.currentTask.messages.push(message);
             this.currentTask.updatedAt = Date.now();
-            
+
             // Update task title from first user message
             if (message.role === 'user' && this.currentTask.title === 'New Task') {
                 this.currentTask.title = message.content.substring(0, 50) + '...';
@@ -633,7 +721,7 @@ export class ClaudeCodeManager implements vscode.Disposable {
             }
 
             this.outputChannel.appendLine(`Resumed session ${sessionId}: "${session.title}"`);
-            
+
             if (this.config.showNotifications) {
                 vscode.window.showInformationMessage(`Resumed Claude Code session: ${session.title}`);
             }
@@ -649,7 +737,7 @@ export class ClaudeCodeManager implements vscode.Disposable {
      */
     startNewSessionWithId(sessionId?: string): void {
         const newSessionId = sessionId || this.sessionManager.generateSessionId();
-        
+
         const task: ClaudeTask = {
             id: newSessionId,
             title: 'New Claude Code Session',
@@ -687,7 +775,7 @@ export class ClaudeCodeManager implements vscode.Disposable {
     /**
      * Set permission mode for SDK
      */
-    setPermissionMode(mode: 'plan' | 'act'): void {
+    setPermissionMode(mode: 'plan' | 'default'): void {
         try {
             if (this.useSDK && this.sdkClient) {
                 this.sdkClient.setPermissionMode(mode);
@@ -701,15 +789,15 @@ export class ClaudeCodeManager implements vscode.Disposable {
     /**
      * Get current permission mode
      */
-    getPermissionMode(): 'plan' | 'act' {
+    getPermissionMode(): 'plan' | 'default' {
         try {
             if (this.useSDK && this.sdkClient) {
                 return this.sdkClient.getPermissionMode();
             }
-            return 'act'; // Default for CLI mode
+            return 'default'; // Default for CLI mode
         } catch (error) {
             this.outputChannel.appendLine(`❌ Error getting permission mode: ${error}`);
-            return 'act'; // Safe fallback
+            return 'default'; // Safe fallback
         }
     }
 
@@ -724,7 +812,7 @@ export class ClaudeCodeManager implements vscode.Disposable {
         }
 
         const info = this.installationDetector.getInstallationInfo(this.installation);
-        
+
         // Show in output channel
         this.outputChannel.clear();
         this.outputChannel.appendLine('🔧 Claude Code Installation Information');
@@ -735,7 +823,7 @@ export class ClaudeCodeManager implements vscode.Disposable {
         // Also show a summary in an information message
         const statusEmoji = this.installation.isWorking ? '✅' : '❌';
         const message = `${statusEmoji} Claude Code (${this.installation.type}) - ${this.installation.version || 'Unknown version'}`;
-        
+
         if (this.installation.isWorking) {
             vscode.window.showInformationMessage(message, 'Show Details').then(action => {
                 if (action === 'Show Details') {

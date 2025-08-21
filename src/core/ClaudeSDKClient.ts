@@ -1,13 +1,9 @@
 import * as vscode from 'vscode';
 import { ClaudeMessage, WorkspaceContext } from '../types';
-// NOTE: Keeping SDK import but will handle it safely
+
+// NOTE: SDK will be dynamically imported to handle ES module compatibility
 let query: any = null;
-try {
-    const claudeSDK = require('@anthropic-ai/claude-code');
-    query = claudeSDK.query;
-} catch (error) {
-    console.log('Claude SDK not available:', error);
-}
+let sdkLoadPromise: Promise<any> | null = null;
 
 interface ClaudeSDKOptions {
     systemPrompt?: string;
@@ -19,7 +15,7 @@ interface ClaudeSDKOptions {
     disallowedTools?: string[];
 }
 
-type PermissionMode = 'plan' | 'act';
+type PermissionMode = 'plan' | 'default';
 
 interface ClaudeSDKResponse {
     content: string;
@@ -43,7 +39,7 @@ export class ClaudeSDKClient {
     private isInitialized = false;
     private sessionId: string | null = null;
     private conversationHistory: ClaudeMessage[] = [];
-    private currentPermissionMode: PermissionMode = 'act'; // Default to 'act' mode
+    private currentPermissionMode: PermissionMode = 'default'; // Default to 'default' mode
 
     constructor(outputChannel: vscode.OutputChannel) {
         this.outputChannel = outputChannel;
@@ -59,7 +55,7 @@ export class ClaudeSDKClient {
             // Check if we can use the SDK directly
             this.outputChannel.appendLine('🔍 Checking SDK support...');
             const hasSDKSupport = await this.checkSDKSupport();
-            
+
             if (!hasSDKSupport) {
                 this.outputChannel.appendLine('⚠️ SDK not available, throwing error for CLI fallback');
                 throw new Error('Claude Code SDK not available. Using CLI fallback.');
@@ -89,7 +85,7 @@ export class ClaudeSDKClient {
      * Send a message to Claude using the SDK
      */
     async sendMessage(
-        message: string, 
+        message: string,
         workspaceContext?: WorkspaceContext,
         sessionId?: string
     ): Promise<ClaudeSDKResponse> {
@@ -100,13 +96,13 @@ export class ClaudeSDKClient {
         try {
             // Prepare enhanced message with context
             const enhancedMessage = this.enhanceMessageWithContext(message, workspaceContext);
-            
+
             this.outputChannel.appendLine(`📤 Sending message to Claude SDK...`);
             this.outputChannel.appendLine(`Message: ${enhancedMessage.substring(0, 100)}...`);
 
             // Use the actual Claude Code SDK
             const response = await this.callClaudeSDK(enhancedMessage, sessionId);
-            
+
             // Add to conversation history
             this.conversationHistory.push({
                 id: Date.now().toString(),
@@ -166,7 +162,7 @@ export class ClaudeSDKClient {
     }
 
     /**
-     * Set permission mode (plan or act)
+     * Set permission mode (plan or default)
      */
     setPermissionMode(mode: PermissionMode): void {
         this.currentPermissionMode = mode;
@@ -185,14 +181,23 @@ export class ClaudeSDKClient {
      */
     private async checkSDKSupport(): Promise<boolean> {
         try {
-            // Check if the SDK was loaded safely
-            if (query && typeof query === 'function') {
-                this.outputChannel.appendLine('✅ Claude Code SDK query function is available');
-                return true;
-            } else {
-                this.outputChannel.appendLine('❌ Claude Code SDK query function not available');
-                return false;
+            // Dynamically load the SDK to handle ES module compatibility
+            if (!query && !sdkLoadPromise) {
+                this.outputChannel.appendLine('🔄 Dynamically loading Claude Code SDK...');
+                sdkLoadPromise = this.loadSDK();
             }
+
+            if (sdkLoadPromise) {
+                const sdk = await sdkLoadPromise;
+                if (sdk && typeof sdk.query === 'function') {
+                    query = sdk.query;
+                    this.outputChannel.appendLine('✅ Claude Code SDK query function is available via dynamic import');
+                    return true;
+                }
+            }
+
+            this.outputChannel.appendLine('❌ Claude Code SDK query function not available');
+            return false;
         } catch (error) {
             this.outputChannel.appendLine(`❌ Error checking SDK support: ${error}`);
             return false;
@@ -200,14 +205,80 @@ export class ClaudeSDKClient {
     }
 
     /**
+     * Dynamically load the Claude Code SDK using various fallback methods
+     */
+    private async loadSDK(): Promise<any> {
+        // Method 1: Direct dynamic import (should work best with ES modules)
+        try {
+            this.outputChannel.appendLine('🔍 Attempting dynamic import of @anthropic-ai/claude-code...');
+            const sdk = await import('@anthropic-ai/claude-code');
+            if (sdk && typeof sdk.query === 'function') {
+                this.outputChannel.appendLine('✅ SDK loaded successfully with dynamic import');
+                return sdk;
+            }
+        } catch (error) {
+            this.outputChannel.appendLine(`⚠️ Dynamic import failed: ${error}`);
+        }
+
+        // Method 2: Try importing from global installation path
+        try {
+            this.outputChannel.appendLine('🔍 Attempting to load SDK from global installation...');
+            const globalPaths = [
+                '/home/edgar/.nvm/versions/node/v22.15.0/lib/node_modules/@anthropic-ai/claude-code',
+                process.env.NVM_BIN ? process.env.NVM_BIN.replace('/bin', '/lib/node_modules/@anthropic-ai/claude-code') : null,
+                '/usr/local/lib/node_modules/@anthropic-ai/claude-code',
+                '/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code'
+            ].filter(Boolean) as string[];
+
+            for (const globalPath of globalPaths) {
+                try {
+                    this.outputChannel.appendLine(`🔍 Trying global path: ${globalPath}`);
+                    const sdkPath = `${globalPath}/sdk.mjs`;
+
+                    // Check if file exists
+                    const fs = eval('require')('fs');
+                    if (fs.existsSync(sdkPath)) {
+                        this.outputChannel.appendLine(`✅ Found SDK at: ${sdkPath}`);
+                        const sdk = await import(sdkPath);
+                        if (sdk && typeof sdk.query === 'function') {
+                            this.outputChannel.appendLine('✅ SDK loaded successfully from global installation');
+                            return sdk;
+                        }
+                    }
+                } catch (error) {
+                    this.outputChannel.appendLine(`⚠️ Global path ${globalPath} failed: ${error}`);
+                    continue;
+                }
+            }
+        } catch (error) {
+            this.outputChannel.appendLine(`⚠️ Global import method failed: ${error}`);
+        }
+
+        // Method 3: Fallback to CommonJS require using eval
+        try {
+            this.outputChannel.appendLine('🔍 Attempting CommonJS require fallback...');
+            const requireFunc = eval('require');
+            const sdk = requireFunc('@anthropic-ai/claude-code');
+            if (sdk && typeof sdk.query === 'function') {
+                this.outputChannel.appendLine('✅ SDK loaded successfully with CommonJS require');
+                return sdk;
+            }
+        } catch (error) {
+            this.outputChannel.appendLine(`⚠️ CommonJS require failed: ${error}`);
+        }
+
+        throw new Error('All SDK loading methods failed - SDK not available');
+    }
+
+    /**
      * Call the actual Claude Code SDK with timeout to prevent infinite loading
      */
     private async callClaudeSDK(message: string, sessionId?: string): Promise<ClaudeSDKResponse> {
         const timeout = 30000; // 30 second timeout
-        
+
         try {
             this.outputChannel.appendLine(`🔗 Calling Claude Code SDK with timeout (${timeout}ms)...`);
-            
+
             // Wrap the SDK call in a timeout to prevent infinite loading
             const sdkPromise = this.executeSDKQuery(message, sessionId);
             const timeoutPromise = new Promise<never>((_, reject) => {
@@ -219,7 +290,7 @@ export class ClaudeSDKClient {
 
         } catch (error) {
             this.outputChannel.appendLine(`❌ Claude SDK call failed: ${error}`);
-            
+
             // Provide helpful response even on failure
             return {
                 content: `🔄 **Claude Code SDK Integration**\n\nThere was an issue processing your request:\n\n\`\`\`\n${error}\n\`\`\`\n\n💡 **However, the integration is working!** This error suggests:\n- ✅ SDK is properly installed\n- ✅ Extension can import and call the SDK\n- ⚠️ Configuration or API key issue\n\n🚀 **Try these solutions:**\n1. Check your API key: \`claude config\`\n2. Test CLI directly: \`echo "hello" | claude\`\n3. Restart VS Code and try again\n\nThe extension successfully switched from CLI subprocess to direct SDK integration!`,
@@ -243,13 +314,13 @@ export class ClaudeSDKClient {
         if (!query) {
             throw new Error('SDK not available - using CLI fallback');
         }
-        
+
         try {
             // Keep it simple for now
             const sdkPermissionMode = this.currentPermissionMode === 'plan' ? 'plan' : 'acceptEdits';
-            
+
             this.outputChannel.appendLine(`🎯 Using permission mode: ${this.currentPermissionMode.toUpperCase()}`);
-            
+
             const queryIterator = query({
                 prompt: message,
                 options: {
@@ -315,7 +386,7 @@ export class ClaudeSDKClient {
         // Add current file context
         if (context.currentFile) {
             enhancedMessage += `\n**Current File:** ${context.currentFile.path}`;
-            
+
             if (context.currentFile.selection) {
                 const selection = context.currentFile.selection;
                 enhancedMessage += `\n**Selected Lines:** ${selection.start.line}-${selection.end.line}`;
@@ -357,7 +428,7 @@ Your goal is to be a seamless coding assistant integrated into the developer's w
     private getDefaultAllowedTools(): string[] {
         return [
             'file_read',
-            'file_write', 
+            'file_write',
             'file_edit',
             'bash_execute',
             'grep_search',
